@@ -1,0 +1,44 @@
+{
+  "name": "termcoder",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Universal terminal coding agent with multi-provider AI support - Claude Code alternative",
+  "keywords": ["ai", "coding", "terminal", "chatgpt", "openai", "claude-code", "anthropic", "xai", "google", "mistral", "cohere", "ollama"],
+  "author": "dhrxv8",
+  "license": "MIT",
+  "homepage": "https://github.com/dhrxv8/TermCoder#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dhrxv8/TermCoder.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dhrxv8/TermCoder/issues"
+  },
+  "bin": {
+    "termcoder": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "dev": "tsc -w",
+    "index": "node dist/index.js --help"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "fast-glob": "^3.3.2",
+    "openai": "^4.58.1",
+    "yargs": "^17.7.2",
+    "undici": "^6.19.8",
+    "inquirer": "^9.2.12",
+    "keytar": "^7.9.0",
+    "zod": "^3.22.4",
+    "@anthropic-ai/sdk": "^0.24.3",
+    "@google/generative-ai": "^0.15.0",
+    "playwright": "^1.44.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/yargs": "^17.0.32",
+    "@types/inquirer": "^9.0.7",
+    "typescript": "^5.5.4"
+  }
+}
