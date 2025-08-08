@@ -15,7 +15,7 @@ import { log } from "./util/logging.js";
 import { runOnboarding, getProviderKey, setProviderKey, listProviderKeys } from "./onboarding.js";
 import { loadConfig, configExists, validateConfig, resetConfig, configPath } from "./state/config.js";
 import { loadSession, createSession, updateSession, listRecentSessions } from "./state/session.js";
-import { formatBudgetStatus } from "./util/costs.js";
+import { formatBudgetStatus, formatDetailedBudgetStatus } from "./util/costs.js";
 import { getIndexStats } from "./retriever/indexer.js";
 import { getProvider, registry } from "./providers/index.js";
 
@@ -377,7 +377,7 @@ const launchUI = Boolean((argv as any).ui);
     
     if (cmd === "/budget") {
       log.raw("");
-      const budgetStatus = await formatBudgetStatus();
+      const budgetStatus = await formatDetailedBudgetStatus();
       log.raw(budgetStatus);
       log.raw("");
       rl.prompt();

@@ -7,6 +7,7 @@ import { logSession } from "../util/sessionLog.js";
 import { log } from "../util/logging.js";
 import { getProvider, ProviderId } from "../providers/index.js";
 import { loadConfig } from "../state/config.js";
+import { estimateTaskCost, checkBudgetBeforeTask, trackTaskUsage } from "../util/costs.js";
 
 export async function runTask(repo: string, task: string, dry = false, model?: string, branchName?: string, providerId?: string) {
   // 1) Ensure index exists (very naive check)
@@ -26,6 +27,47 @@ export async function runTask(repo: string, task: string, dry = false, model?: s
   if (!chatModel) {
     log.error(`No chat model configured for provider ${currentProvider}`);
     return;
+  }
+  
+  // 2.5) Check budget before proceeding
+  log.step("Budget check", "estimating task cost...");
+  try {
+    const costEstimate = await estimateTaskCost(currentProvider, chatModel, task);
+    log.raw(`  💰 Estimated cost: $${costEstimate.estimatedCost.toFixed(4)} (${costEstimate.inputTokens + costEstimate.outputTokens} tokens)`);
+    
+    const budgetCheck = await checkBudgetBeforeTask(
+      currentProvider, 
+      chatModel, 
+      costEstimate.inputTokens, 
+      costEstimate.outputTokens
+    );
+    
+    if (!budgetCheck.allowed) {
+      if (budgetCheck.reason?.includes("Continue anyway?")) {
+        // Ask for user confirmation
+        log.warn(budgetCheck.reason);
+        const readline = await import("node:readline");
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
+        
+        const answer = await new Promise<string>(resolve => {
+          rl.question("Continue with this task? (y/N): ", resolve);
+        });
+        rl.close();
+        
+        if (!answer.toLowerCase().startsWith('y')) {
+          log.info("Task cancelled by user");
+          return;
+        }
+      } else {
+        log.error(budgetCheck.reason || "Budget limit exceeded");
+        return;
+      }
+    }
+  } catch (error) {
+    log.warn("Budget check failed, proceeding:", error);
   }
   
   // 3) Make a query embedding and retrieve
@@ -63,6 +105,14 @@ export async function runTask(repo: string, task: string, dry = false, model?: s
     model: chatModel,
     temperature: 0.2
   });
+
+  // 4.5) Track usage
+  try {
+    await trackTaskUsage(currentProvider, chatModel, task, sys + usr, out, repo);
+    log.raw(`  📊 Usage tracked successfully`);
+  } catch (error) {
+    log.warn("Usage tracking failed:", error);
+  }
 
   // 5) Extract unified diff
   const m = out.match(/---BEGIN DIFF---\n([\s\S]*?)\n---END DIFF---/);

@@ -2,6 +2,7 @@ import { getProvider, listProviders } from "../providers/index.js";
 import { loadConfig } from "../state/config.js";
 import { updateSession } from "../state/session.js";
 import { log } from "./logging.js";
+import { saveUsageRecord, getCurrentMonthSpending as getCurrentMonthSpendingFromTracker } from "./usage-tracker.js";
 
 export interface UsageRecord {
   timestamp: string;
@@ -131,6 +132,9 @@ export async function recordUsage(
     repoPath
   };
   
+  // Save usage record to persistent storage
+  await saveUsageRecord(record);
+  
   // Update session if repo path provided
   if (repoPath) {
     await updateSession(repoPath, {
@@ -179,12 +183,7 @@ export async function getBudgetStatus(): Promise<BudgetStatus> {
 }
 
 async function getCurrentMonthSpending(): Promise<number> {
-  // This would ideally read from a persistent usage log
-  // For now, we'll return 0 as a placeholder
-  // In a real implementation, you'd want to:
-  // 1. Store usage records in ~/.termcode/usage/YYYY-MM.json
-  // 2. Read and sum costs for current month
-  return 0;
+  return getCurrentMonthSpendingFromTracker();
 }
 
 async function checkBudgetAndWarn(newCost: number): Promise<void> {
@@ -203,6 +202,76 @@ async function checkBudgetAndWarn(newCost: number): Promise<void> {
   }
 }
 
+// Check if a task should be allowed to proceed based on budget
+export async function checkBudgetBeforeTask(
+  provider: string,
+  model: string,
+  estimatedInputTokens: number,
+  estimatedOutputTokens: number = 0
+): Promise<{ allowed: boolean; reason?: string; estimatedCost?: number }> {
+  const estimatedCost = await calculateCost(provider, model, estimatedInputTokens, estimatedOutputTokens);
+  const status = await getBudgetStatus();
+  
+  const newTotal = status.currentSpent + estimatedCost;
+  const newPercentage = (newTotal / status.monthlyBudget) * 100;
+  
+  // Hard stop at 120% of budget to prevent runaway costs
+  if (newPercentage > 120) {
+    return {
+      allowed: false,
+      reason: `Task would exceed budget limit by too much ($${newTotal.toFixed(4)} vs $${status.monthlyBudget} budget)`,
+      estimatedCost
+    };
+  }
+  
+  // Soft warning at 100% - ask for confirmation
+  if (newPercentage > 100) {
+    return {
+      allowed: false,
+      reason: `Task would exceed monthly budget ($${newTotal.toFixed(4)} vs $${status.monthlyBudget}). Continue anyway?`,
+      estimatedCost
+    };
+  }
+  
+  return {
+    allowed: true,
+    estimatedCost
+  };
+}
+
+// Estimate cost for a task before executing
+export async function estimateTaskCost(
+  provider: string,
+  model: string,
+  taskDescription: string,
+  contextSize: number = 0
+): Promise<{ inputTokens: number; outputTokens: number; estimatedCost: number }> {
+  // Estimate input tokens (task + context + system prompts)
+  const systemPromptTokens = 500; // Rough estimate for system prompts
+  const taskTokens = estimateTokens(taskDescription, model);
+  const inputTokens = systemPromptTokens + taskTokens + contextSize;
+  
+  // Estimate output tokens based on task complexity
+  let outputTokens: number;
+  if (taskDescription.toLowerCase().includes('implement') || taskDescription.toLowerCase().includes('create')) {
+    outputTokens = Math.max(inputTokens * 2, 1000); // Code generation tasks produce more output
+  } else if (taskDescription.toLowerCase().includes('fix') || taskDescription.toLowerCase().includes('debug')) {
+    outputTokens = Math.max(inputTokens * 1, 500); // Bug fixes are usually smaller
+  } else if (taskDescription.toLowerCase().includes('refactor') || taskDescription.toLowerCase().includes('improve')) {
+    outputTokens = Math.max(inputTokens * 1.5, 750); // Refactoring is moderate
+  } else {
+    outputTokens = Math.max(inputTokens * 0.8, 300); // General tasks
+  }
+  
+  const estimatedCost = await calculateCost(provider, model, inputTokens, outputTokens);
+  
+  return {
+    inputTokens,
+    outputTokens,
+    estimatedCost
+  };
+}
+
 export async function formatBudgetStatus(): Promise<string> {
   const status = await getBudgetStatus();
   
@@ -216,11 +285,63 @@ export async function formatBudgetStatus(): Promise<string> {
   else if (status.percentage >= 90) statusIcon = "⚠️";
   else if (status.percentage >= 75) statusIcon = "💛";
   
-  let output = `${statusIcon} Budget: ${spentFormatted} of ${budgetFormatted} used (${percentageFormatted})`;
+  let output = `${statusIcon} Budget Status:\n`;
+  output += `   Current: ${spentFormatted} of ${budgetFormatted} (${percentageFormatted})\n`;
+  output += `   Remaining: ${remainingFormatted}\n`;
   
   if (status.projectedMonthlySpend > status.monthlyBudget * 1.1) {
     const projectedFormatted = `$${status.projectedMonthlySpend.toFixed(2)}`;
-    output += `\\n   📈 Projected monthly spend: ${projectedFormatted}`;
+    output += `   📈 Projected monthly: ${projectedFormatted} (over budget!)\n`;
+  } else {
+    const projectedFormatted = `$${status.projectedMonthlySpend.toFixed(2)}`;
+    output += `   📈 Projected monthly: ${projectedFormatted}\n`;
+  }
+  
+  output += `   📅 Day ${status.daysIntoMonth} of month`;
+  
+  return output;
+}
+
+// Enhanced budget status with usage breakdown
+export async function formatDetailedBudgetStatus(): Promise<string> {
+  const status = await getBudgetStatus();
+  let output = await formatBudgetStatus();
+  
+  try {
+    const { getCurrentMonthStats } = await import("./usage-tracker.js");
+    const stats = await getCurrentMonthStats();
+    
+    if (stats.totalRecords > 0) {
+      output += `\n\n📊 Usage Statistics:\n`;
+      output += `   Total API calls: ${stats.totalRecords}\n`;
+      output += `   Total tokens: ${stats.totalTokens.toLocaleString()}\n`;
+      
+      // Top providers
+      const sortedProviders = Object.entries(stats.byProvider)
+        .sort(([,a], [,b]) => b.cost - a.cost)
+        .slice(0, 3);
+      
+      if (sortedProviders.length > 0) {
+        output += `\n   Top Providers:\n`;
+        for (const [provider, data] of sortedProviders) {
+          output += `   • ${provider}: $${data.cost.toFixed(4)} (${data.calls} calls)\n`;
+        }
+      }
+      
+      // Top models
+      const sortedModels = Object.entries(stats.byModel)
+        .sort(([,a], [,b]) => b.cost - a.cost)
+        .slice(0, 3);
+      
+      if (sortedModels.length > 0) {
+        output += `\n   Top Models:\n`;
+        for (const [model, data] of sortedModels) {
+          output += `   • ${model}: $${data.cost.toFixed(4)} (${data.calls} calls)\n`;
+        }
+      }
+    }
+  } catch (error) {
+    // Ignore stats errors
   }
   
   return output;

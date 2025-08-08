@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { UIMode } from '../types.js';
+import { getBudgetStatus, BudgetStatus } from '../../util/costs.js';
 
 interface StatusBarProps {
   height: number;
@@ -21,9 +22,60 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   branch,
   project,
 }) => {
+  const [budgetStatus, setBudgetStatus] = useState<BudgetStatus | null>(null);
+  
+  // Load budget status
+  useEffect(() => {
+    const loadBudget = async () => {
+      try {
+        const budget = await getBudgetStatus();
+        setBudgetStatus(budget);
+      } catch (error) {
+        // Ignore budget loading errors
+      }
+    };
+    
+    loadBudget();
+    
+    // Refresh budget status every 30 seconds
+    const interval = setInterval(loadBudget, 30000);
+    return () => clearInterval(interval);
+  }, []);
+  
   const modeColor = mode === 'easy' ? 'green' : 'blue';
   const statusColor = status.includes('Error') || status.includes('Failed') ? 'red' :
                      status.includes('Running') || status.includes('Processing') ? 'yellow' : 'green';
+  
+  // Budget status formatting
+  const getBudgetDisplay = () => {
+    if (!budgetStatus) return null;
+    
+    let budgetColor: string;
+    let budgetIcon: string;
+    
+    if (budgetStatus.isOverBudget) {
+      budgetColor = 'red';
+      budgetIcon = '🚨';
+    } else if (budgetStatus.percentage >= 90) {
+      budgetColor = 'yellow';
+      budgetIcon = '⚠️';
+    } else if (budgetStatus.percentage >= 75) {
+      budgetColor = 'yellow';
+      budgetIcon = '💛';
+    } else {
+      budgetColor = 'green';
+      budgetIcon = '💚';
+    }
+    
+    return {
+      icon: budgetIcon,
+      text: `$${budgetStatus.currentSpent.toFixed(2)}/${budgetStatus.monthlyBudget}`,
+      color: budgetColor,
+      percentage: budgetStatus.percentage
+    };
+  };
+  
+  const budgetDisplay = getBudgetDisplay();
 
   return (
     <Box height={height} borderStyle="single" borderColor="gray" padding={0}>
@@ -50,8 +102,16 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           </Text>
         </Box>
 
-        {/* Right side: Branch and Project */}
+        {/* Right side: Budget, Branch and Project */}
         <Box>
+          {budgetDisplay && (
+            <>
+              <Text color={budgetDisplay.color}>
+                {budgetDisplay.icon} {budgetDisplay.text}
+              </Text>
+              <Text color="gray"> • </Text>
+            </>
+          )}
           {project && (
             <>
               <Text color="magenta">{project}</Text>
