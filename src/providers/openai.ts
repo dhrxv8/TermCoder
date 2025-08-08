@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { Provider, ChatMsg, ModelInfo } from "./types.js";
+import { Provider, ChatMsg, ModelInfo, HealthStatus } from "./types.js";
 import { getProviderKey } from "../onboarding.js";
 
 export const openaiProvider: Provider = {
@@ -58,6 +58,54 @@ export const openaiProvider: Provider = {
       { id: "text-embedding-3-small", type: "embed", context: 8192, costPer1kTokens: 0.00002 },
       { id: "text-embedding-ada-002", type: "embed", context: 8192, costPer1kTokens: 0.0001 }
     ];
+  },
+  
+  async healthCheck(): Promise<HealthStatus> {
+    const start = Date.now();
+    
+    try {
+      const key = await getProviderKey("openai");
+      if (!key) {
+        return { 
+          status: "error", 
+          error: "No API key configured" 
+        };
+      }
+      
+      const client = new OpenAI({ apiKey: key });
+      
+      // Simple test request to check API availability
+      await client.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1,
+        temperature: 0
+      });
+      
+      const latency = Date.now() - start;
+      const models = (await this.listModels()).filter(m => m.type === "chat").map(m => m.id);
+      
+      return {
+        status: "healthy",
+        latency,
+        models
+      };
+      
+    } catch (error: any) {
+      const latency = Date.now() - start;
+      let status: "degraded" | "error" = "error";
+      
+      // Distinguish between rate limits (degraded) vs auth errors (error)
+      if (error.status === 429 || error.code === 'rate_limit_exceeded') {
+        status = "degraded";
+      }
+      
+      return {
+        status,
+        latency,
+        error: error.message || "Unknown error"
+      };
+    }
   },
   
   estimateCost(tokens: number, model: string, type: "chat" | "embed"): number {

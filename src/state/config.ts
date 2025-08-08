@@ -37,8 +37,48 @@ export async function loadConfig(): Promise<AppConfig | null> {
 }
 
 export async function saveConfig(cfg: AppConfig): Promise<void> {
-  await ensureConfigDir();
-  await fs.writeFile(cfgPath, JSON.stringify(cfg, null, 2), "utf8");
+  try {
+    // Validate config before saving
+    const validated = ConfigSchema.parse(cfg);
+    await ensureConfigDir();
+    await fs.writeFile(cfgPath, JSON.stringify(validated, null, 2), "utf8");
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      throw new Error(`Invalid configuration: ${error.issues.map(i => i.message).join(", ")}`);
+    }
+    throw error;
+  }
+}
+
+export async function validateConfig(): Promise<{ valid: boolean; errors: string[] }> {
+  try {
+    const config = await loadConfig();
+    if (!config) {
+      return { valid: false, errors: ["No configuration found"] };
+    }
+    
+    ConfigSchema.parse(config);
+    return { valid: true, errors: [] };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return { 
+        valid: false, 
+        errors: error.issues.map(i => `${i.path.join(".")}: ${i.message}`) 
+      };
+    }
+    return { valid: false, errors: [error instanceof Error ? error.message : "Unknown error"] };
+  }
+}
+
+export async function resetConfig(): Promise<void> {
+  try {
+    await fs.unlink(cfgPath);
+  } catch (error) {
+    // Ignore if file doesn't exist
+    if ((error as any).code !== 'ENOENT') {
+      throw error;
+    }
+  }
 }
 
 export function configPath(): string {

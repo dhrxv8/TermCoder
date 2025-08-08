@@ -8,54 +8,123 @@ import { runTask } from "./agent/planner.js";
 import { buildIndex } from "./retriever/indexer.js";
 import { ensureCleanGit, createBranch, checkoutBranch, deleteBranch, mergeBranch } from "./tools/git.js";
 import { createPullRequest } from "./tools/github.js";
-import { runTests, runLinter, runBuild } from "./tools/test.js";
+import { runTestsLegacy, runLinterLegacy, runBuildLegacy, detectProjectType } from "./tools/test.js";
 import { runShell } from "./tools/shell.js";
 import { getSessionLogs, clearSessionLogs } from "./util/sessionLog.js";
 import { log } from "./util/logging.js";
 import { runOnboarding, getProviderKey, setProviderKey, listProviderKeys } from "./onboarding.js";
-import { loadConfig, configExists } from "./state/config.js";
+import { loadConfig, configExists, validateConfig, resetConfig, configPath } from "./state/config.js";
+import { loadSession, createSession, updateSession, listRecentSessions } from "./state/session.js";
+import { formatBudgetStatus } from "./util/costs.js";
+import { getIndexStats } from "./retriever/indexer.js";
 import { getProvider, registry } from "./providers/index.js";
 
 const argv = yargs(hideBin(process.argv))
   .scriptName("termcode")
-  .usage("$0 [task] [options]")
-  .positional("task", { describe: "High-level request (feature/refactor/fix)", type: "string" })
-  .option("repo", { type: "string", demandOption: true, describe: "Path to repo" })
-  .option("dry", { type: "boolean", default: false, describe: "Dry run (don't write changes)" })
-  .option("model", { type: "string", describe: "Model to use (overrides config)" })
-  .option("provider", { type: "string", describe: "Provider to use (overrides config)" })
-  .help().parseSync();
+  .usage("$0 [task] --repo <path> [options]")
+  .command("$0 [task]", "Execute a coding task or start interactive session", (yargs) => {
+    yargs.positional("task", {
+      describe: "High-level coding request (feature/refactor/fix/etc.)",
+      type: "string",
+    });
+  })
+  .option("repo", {
+    alias: "r",
+    type: "string",
+    demandOption: true,
+    describe: "Path to repository (required)",
+  })
+  .option("dry", {
+    alias: "d",
+    type: "boolean",
+    default: false,
+    describe: "Preview changes without applying them",
+  })
+  .option("model", {
+    alias: "m",
+    type: "string",
+    describe: "Override model (gpt-4o, claude-3-5-sonnet, etc.)",
+  })
+  .option("provider", {
+    alias: "p",
+    type: "string",
+    describe: "Override provider (openai, anthropic, xai, google, etc.)",
+  })
+  .option("ui", {
+    alias: "u",
+    type: "boolean",
+    default: false,
+    describe: "Launch full-screen TUI interface",
+  })
+  .example("$0 --repo .", "Start interactive session in current directory")
+  .example('$0 "Add user auth" --repo .', "Execute one-shot task")
+  .example("$0 --repo . --provider anthropic", "Use specific AI provider")
+  .example("$0 --repo . --model gpt-4o --dry", "Preview changes with GPT-4o")
+  .example("$0 --repo . --ui", "Launch full-screen TUI interface")
+  .version()
+  .help()
+  .parseSync();
 
 const repo = path.resolve(String((argv as any).repo));
 const initialTask = String((argv as any)._?.[0] || "");
 const dry = Boolean((argv as any).dry);
 const cliModel = String((argv as any).model || "");
 const cliProvider = String((argv as any).provider || "");
+const launchUI = Boolean((argv as any).ui);
 
 (async () => {
-  // Check if first run (no config)
-  let config = await loadConfig();
-  if (!config) {
-    console.log("🚀 Welcome to TermCode — first-run setup:");
-    config = await runOnboarding();
-  }
+  try {
+    // Validate repository path exists
+    try {
+      const fs = await import("node:fs/promises");
+      const stat = await fs.stat(repo);
+      if (!stat.isDirectory()) {
+        log.error(`Repository path is not a directory: ${repo}`);
+        process.exit(1);
+      }
+    } catch (error) {
+      log.error(`Repository path does not exist: ${repo}`);
+      process.exit(1);
+    }
 
-  // Override with CLI options
-  const currentProvider = cliProvider || config.defaultProvider;
-  const currentModel = cliModel || config.models[currentProvider]?.chat;
+    // Check if first run (no config)
+    let config = await loadConfig();
+    if (!config) {
+      console.log("🚀 Welcome to TermCode — first-run setup:");
+      config = await runOnboarding();
+    }
 
-  if (!currentModel) {
-    log.error(`No model configured for provider ${currentProvider}`);
-    process.exit(1);
-  }
+    // Validate provider exists
+    if (cliProvider && !Object.keys(registry).includes(cliProvider)) {
+      log.error(`Unknown provider: ${cliProvider}. Available: ${Object.keys(registry).join(", ")}`);
+      process.exit(1);
+    }
 
-  log.info(`Using ${currentProvider} (${currentModel})`);
-  log.info("Loading repo:", repo);
+    // Override with CLI options
+    const currentProvider = cliProvider || config.defaultProvider;
+    const currentModel = cliModel || config.models[currentProvider]?.chat;
+
+    if (!currentModel) {
+      log.error(`No model configured for provider ${currentProvider}`);
+      if (!cliModel) {
+        log.info(`Try: termcode --repo ${repo} --provider ${currentProvider} --model <model-name>`);
+      }
+      process.exit(1);
+    }
+
+    // Validate provider has required API key (except ollama)
+    if (currentProvider !== "ollama" && !(await getProviderKey(currentProvider))) {
+      log.error(`No API key found for ${currentProvider}. Run 'termcode --repo ${repo}' to set up keys.`);
+      process.exit(1);
+    }
+
+  log.step("Initializing", `${currentProvider} (${currentModel})`);
+  log.step("Loading repository", repo);
 
   // Check for clean Git state
   const clean = ensureCleanGit(repo);
   if (!clean.ok) {
-    log.error(clean.error);
+    log.error((clean as any).error);
     process.exit(1);
   }
 
@@ -63,20 +132,53 @@ const cliProvider = String((argv as any).provider || "");
   const branchName = `termcode-${Date.now()}`;
   const branch = createBranch(repo, branchName);
   if (!branch.ok) {
-    log.error("Failed to create branch:", branch.error);
+    log.error("Failed to create branch:", (branch as any).error);
     process.exit(1);
   }
-  log.info(`Working on branch: ${branchName}`);
+  log.step("Created branch", branchName);
 
+  log.step("Building index", "scanning codebase...");
   await ensureMemory(repo);
   await buildIndex(repo);
-  log.info("Index ready. Memory loaded.");
+  
+  // Load or create session
+  let session = await loadSession(repo);
+  if (!session) {
+    session = await createSession(repo, currentProvider, currentModel, branchName);
+    log.step("Created session", "new project session");
+  } else {
+    // Update session with current info
+    await updateSession(repo, {
+      provider: currentProvider,
+      model: currentModel,
+      branchName: branchName
+    });
+    log.step("Loaded session", `${session.recentTasks.length} recent tasks`);
+  }
+  
+  // Show project info
+  const projectInfo = await detectProjectType(repo);
+  const indexStats = await getIndexStats(repo);
+  
+  log.success("Ready! Type your request or 'help' for commands");
+  
+  if (projectInfo.hasTests) {
+    log.raw(`  ${log.colors.dim("Project:")} ${log.colors.cyan(projectInfo.type)} with ${log.colors.green(projectInfo.testFiles.length.toString())} test files`);
+  } else {
+    log.raw(`  ${log.colors.dim("Project:")} ${log.colors.cyan(projectInfo.type)} (no tests detected)`);
+  }
+  
+  if (indexStats) {
+    log.raw(`  ${log.colors.dim("Index:")} ${log.colors.green(indexStats.chunkCount.toString())} chunks from ${log.colors.green(indexStats.fileCount.toString())} files`);
+  }
 
   // Session state for REPL
   let sessionState = {
     provider: currentProvider,
     model: currentModel,
-    config: config
+    config: config,
+    session: session,
+    projectInfo: projectInfo
   };
 
   // If user gave a one-shot task, run & exit
@@ -85,11 +187,32 @@ const cliProvider = String((argv as any).provider || "");
     process.exit(0);
   }
 
-  // Otherwise start REPL session
+  // Launch TUI if requested
+  if (launchUI) {
+    log.info("TUI is temporarily disabled - compiling React components...");
+    log.info("Use the regular CLI mode for now");
+    // const { startTUI } = await import("./ui/App.js");
+    // 
+    // log.step("Launching TUI", "full-screen interface");
+    // 
+    // startTUI({
+    //   repo,
+    //   provider: currentProvider,
+    //   model: currentModel,
+    //   config,
+    //   session,
+    //   projectInfo,
+    // });
+    // 
+    // return; // TUI handles everything from here
+  }
+
+  // Otherwise start REPL session  
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: "[termcode] > ",
+    prompt: log.colors.dim("termcode") + log.colors.blue(" > "),
+    historySize: 100,
   });
 
   rl.prompt();
@@ -149,7 +272,7 @@ const cliProvider = String((argv as any).provider || "");
         return;
       }
       
-      log.info(`Provider → ${providerId} (${sessionState.model})`);
+      log.success(`Switched to ${log.colors.bright(providerId)} (${sessionState.model})`);
       rl.prompt();
       return;
     }
@@ -157,56 +280,215 @@ const cliProvider = String((argv as any).provider || "");
     if (input.startsWith("/model ")) {
       const modelId = input.slice(7).trim();
       sessionState.model = modelId;
-      log.info(`Model → ${modelId}`);
+      log.success(`Model updated to ${log.colors.bright(modelId)}`);
       rl.prompt();
       return;
     }
     
     if (cmd === "/keys") {
-      console.log("\\n🔐 API Key Status:");
+      log.raw("");
+      log.raw(log.colors.bright("🔐 API Key Status:"));
       const providerKeys = await listProviderKeys();
       const availableProviders = Object.keys(registry);
       
       for (const providerId of availableProviders) {
+        const providerName = log.colors.cyan(providerId.padEnd(12));
         if (providerId === "ollama") {
-          console.log(`  ${providerId}: ✓ local (no key needed)`);
+          log.raw(`  ${providerName} ${log.colors.green("✓")} ${log.colors.dim("local (no key needed)")}`);
         } else {
           const hasKey = providerKeys.includes(providerId);
-          console.log(`  ${providerId}: ${hasKey ? "✓ configured" : "❌ missing"}`);
+          const status = hasKey ? 
+            `${log.colors.green("✓")} ${log.colors.dim("configured")}` : 
+            `${log.colors.red("❌")} ${log.colors.dim("missing")}`;
+          log.raw(`  ${providerName} ${status}`);
         }
       }
-      console.log("\\nUse /provider <name> to add missing keys");
+      log.raw("");
+      log.raw(log.colors.dim("Use /provider <name> to add missing keys"));
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/health") {
+      log.raw("");
+      log.raw(log.colors.bright("🏥 Provider Health Check:"));
+      const availableProviders = Object.keys(registry);
+      
+      for (const providerId of availableProviders) {
+        const providerName = log.colors.cyan(providerId.padEnd(12));
+        process.stdout.write(`  ${providerName} ${log.colors.dim("checking...")}`);
+        
+        try {
+          const provider = getProvider(providerId);
+          if (provider.healthCheck) {
+            const health = await provider.healthCheck();
+            const statusIcon = health.status === "healthy" ? log.colors.green("✅") : 
+                             health.status === "degraded" ? log.colors.yellow("⚠️") : log.colors.red("❌");
+            const statusText = health.status === "healthy" ? log.colors.green("healthy") :
+                              health.status === "degraded" ? log.colors.yellow("degraded") : log.colors.red("error");
+            const latencyText = health.latency ? log.colors.dim(` (${health.latency}ms)`) : "";
+            
+            process.stdout.write(`\\r  ${providerName} ${statusIcon} ${statusText}${latencyText}\\n`);
+            
+            if (health.error) {
+              log.raw(`    ${log.colors.dim("Error:")} ${log.colors.red(health.error)}`);
+            }
+            if (health.models && health.models.length > 0) {
+              const modelList = health.models.slice(0, 3).join(", ");
+              const moreText = health.models.length > 3 ? `... (${health.models.length} total)` : "";
+              log.raw(`    ${log.colors.dim("Models:")} ${log.colors.dim(modelList + moreText)}`);
+            }
+          } else {
+            process.stdout.write(`\\r  ${providerName} ${log.colors.dim("➖ health check not implemented")}\\n`);
+          }
+        } catch (error) {
+          const errorText = error instanceof Error ? error.message : "unknown";
+          process.stdout.write(`\\r  ${providerName} ${log.colors.red("❌ error")} ${log.colors.dim("- " + errorText)}\\n`);
+        }
+      }
+      log.raw("");
       rl.prompt();
       return;
     }
     
     if (cmd === "/whoami") {
-      console.log("\\n🤖 Current Session:");
-      console.log(`  Provider: ${sessionState.provider}`);
-      console.log(`  Model: ${sessionState.model}`);
-      console.log(`  Branch: ${branchName}`);
-      console.log(`  Tools: ${Object.entries(sessionState.config.tools).filter(([_, enabled]) => enabled).map(([name]) => name).join(", ")}`);
+      log.raw("");
+      log.raw(log.colors.bright("🤖 Current Session:"));
+      log.raw(`  ${log.colors.dim("Provider:")} ${log.colors.cyan(sessionState.provider)}`);
+      log.raw(`  ${log.colors.dim("Model:")} ${log.colors.bright(sessionState.model)}`);
+      log.raw(`  ${log.colors.dim("Branch:")} ${log.colors.magenta(branchName)}`);
+      log.raw(`  ${log.colors.dim("Project:")} ${log.colors.cyan(sessionState.projectInfo.type)}`);
+      
+      const enabledTools = Object.entries(sessionState.config.tools)
+        .filter(([_, enabled]) => enabled)
+        .map(([name]) => name);
+      log.raw(`  ${log.colors.dim("Tools:")} ${log.colors.green(enabledTools.join(", "))}`);
+      
+      // Show session stats
+      if (sessionState.session.totalTokensUsed > 0) {
+        log.raw(`  ${log.colors.dim("Usage:")} ${log.colors.yellow(sessionState.session.totalTokensUsed.toString())} tokens, ${log.colors.yellow("$" + sessionState.session.totalCostUSD.toFixed(4))}`);
+      }
+      
+      log.raw(`  ${log.colors.dim("Config:")} ${log.colors.dim(configPath())}`);
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/budget") {
+      log.raw("");
+      const budgetStatus = await formatBudgetStatus();
+      log.raw(budgetStatus);
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/sessions") {
+      log.raw("");
+      log.raw(log.colors.bright("📋 Recent Sessions:"));
+      
+      const recentSessions = await listRecentSessions(5);
+      if (recentSessions.length === 0) {
+        log.raw(log.colors.dim("  No recent sessions found"));
+      } else {
+        for (const sess of recentSessions) {
+          const timeAgo = new Date(Date.now() - new Date(sess.lastUsed).getTime()).toISOString().substr(11, 8);
+          const current = sess.repoPath === repo ? log.colors.green(" (current)") : "";
+          log.raw(`  ${log.colors.cyan(sess.repoPath.split('/').pop() || sess.repoPath)} - ${log.colors.dim(sess.provider)}/${log.colors.dim(sess.model)} - ${log.colors.dim(timeAgo)} ago${current}`);
+          
+          if (sess.recentTasks.length > 0) {
+            log.raw(`    ${log.colors.dim("Last:")} ${log.colors.dim(sess.recentTasks[0])}`);
+          }
+        }
+      }
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/config") {
+      log.raw("");
+      log.raw(log.colors.bright("⚙️ Configuration Commands:"));
+      log.raw(`  ${log.colors.cyan("/config validate")}  ${log.colors.dim("- Validate current configuration")}`);
+      log.raw(`  ${log.colors.cyan("/config reset")}     ${log.colors.dim("- Reset configuration (requires re-setup)")}`);
+      log.raw(`  ${log.colors.cyan("/config path")}      ${log.colors.dim("- Show config file path")}`);
+      log.raw(`  ${log.colors.cyan("/config edit")}      ${log.colors.dim("- Open config in editor")}`);
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (input.startsWith("/config ")) {
+      const subCmd = input.split(" ")[1];
+      
+      switch (subCmd) {
+        case "validate":
+          const validation = await validateConfig();
+          if (validation.valid) {
+            log.info("✅ Configuration is valid");
+          } else {
+            log.error("❌ Configuration errors:");
+            validation.errors.forEach(err => console.log(`  • ${err}`));
+          }
+          break;
+          
+        case "reset":
+          const inquirer = await import("inquirer");
+          const { confirm } = await inquirer.default.prompt([{
+            type: "confirm",
+            name: "confirm",
+            message: "Reset configuration? This will require re-setup.",
+            default: false
+          }]);
+          
+          if (confirm) {
+            await resetConfig();
+            log.info("✅ Configuration reset. Run termcode again to re-configure.");
+            rl.close();
+            return;
+          } else {
+            log.info("Reset cancelled");
+          }
+          break;
+          
+        case "path":
+          console.log(`\\n📁 Configuration file: ${configPath()}`);
+          break;
+          
+        case "edit":
+          const { spawn } = await import("node:child_process");
+          const editor = process.env.EDITOR || "nano";
+          spawn(editor, [configPath()], { stdio: "inherit" });
+          break;
+          
+        default:
+          log.error(`Unknown config command: ${subCmd}`);
+          log.info("Use '/config' to see available commands");
+      }
+      
       rl.prompt();
       return;
     }
     
     // Git workflow commands
     if (cmd === "rollback") {
-      log.warn("Rolling back all changes...");
+      log.step("Rolling back", "discarding all changes...");
       checkoutBranch(repo, "main");
       deleteBranch(repo, branchName);
-      log.info("Rollback complete. Switched back to main.");
+      log.success("Rollback complete - switched back to main");
       rl.close();
       return;
     }
     
     if (cmd === "merge") {
-      log.info(`Merging ${branchName} into main...`);
+      log.step("Merging", `${branchName} into main...`);
       checkoutBranch(repo, "main");
       const m = mergeBranch(repo, branchName);
-      if (!m.ok) log.error("Merge failed:", m.error);
-      else {
-        log.info("Merge complete.");
+      if (!m.ok) {
+        log.error("Merge failed:", (m as any).error);
+      } else {
+        log.success("Merge complete");
         deleteBranch(repo, branchName);
       }
       rl.close();
@@ -228,7 +510,7 @@ const cliProvider = String((argv as any).provider || "");
         const body = branchLogs.map(l => `• ${l.task}`).join("\\n") + "\\n\\n🤖 Generated with TermCode";
         
         const prUrl = await createPullRequest(repo, branchName, title, body);
-        log.info(`✅ Created PR: ${prUrl}`);
+        log.success(`Pull request created: ${log.colors.blue(prUrl)}`);
       } catch (error) {
         log.error("Failed to create PR:", (error as Error).message);
       }
@@ -238,22 +520,58 @@ const cliProvider = String((argv as any).provider || "");
 
     // Test commands
     if (cmd === "test") {
-      const success = await runTests(repo);
-      log.info(success ? "✅ Tests passed" : "❌ Tests failed");
+      const { runTests } = await import("./tools/test.js");
+      const result = await runTests(repo);
+      
+      if (result.success) {
+        let message = `Tests passed with ${result.runner}`;
+        if (result.testsRun) {
+          message += ` (${result.testsRun} tests`;
+          if (result.testsPassed) message += `, ${result.testsPassed} passed`;
+          if (result.testsFailed) message += `, ${result.testsFailed} failed`;
+          message += ")";
+        }
+        if (result.duration) {
+          message += ` in ${(result.duration / 1000).toFixed(1)}s`;
+        }
+        log.success(message);
+      } else {
+        log.error(`Tests failed: ${result.output.split('\n')[0]}`);
+      }
       rl.prompt();
       return;
     }
 
     if (cmd === "lint") {
-      const success = await runLinter(repo);
-      log.info(success ? "✅ Linting passed" : "❌ Linting failed");
+      const { runLinter } = await import("./tools/test.js");
+      const result = await runLinter(repo);
+      
+      if (result.success) {
+        let message = `Linting passed with ${result.runner}`;
+        if (result.duration) {
+          message += ` in ${(result.duration / 1000).toFixed(1)}s`;
+        }
+        log.success(message);
+      } else {
+        log.error(`Linting failed: ${result.output.split('\n')[0]}`);
+      }
       rl.prompt();
       return;
     }
 
     if (cmd === "build") {
-      const success = await runBuild(repo);
-      log.info(success ? "✅ Build passed" : "❌ Build failed");
+      const { runBuild } = await import("./tools/test.js");
+      const result = await runBuild(repo);
+      
+      if (result.success) {
+        let message = `Build passed with ${result.runner}`;
+        if (result.duration) {
+          message += ` in ${(result.duration / 1000).toFixed(1)}s`;
+        }
+        log.success(message);
+      } else {
+        log.error(`Build failed: ${result.output.split('\n')[0]}`);
+      }
       rl.prompt();
       return;
     }
@@ -264,14 +582,26 @@ const cliProvider = String((argv as any).provider || "");
       const branchLogs = logs.filter(l => l.branchName === branchName);
       
       if (branchLogs.length === 0) {
-        log.info("No session logs found for this branch");
+        log.raw("");
+        log.raw(log.colors.dim("📋 No session logs found for this branch"));
+        log.raw("");
       } else {
-        console.log("\\n📋 Session Log:");
+        log.raw("");
+        log.raw(log.colors.bright("📋 Session Log:"));
         branchLogs.forEach((entry, i) => {
-          console.log(`${i + 1}. ${entry.task}`);
-          console.log(`   Applied: ${entry.applied.join(", ") || "none"}`);
-          console.log(`   Model: ${entry.model}`);
+          const num = log.colors.dim(`${i + 1}.`);
+          const task = log.colors.bright(entry.task);
+          log.raw(`${num} ${task}`);
+          
+          if (entry.applied && entry.applied.length > 0) {
+            const files = entry.applied.map(f => log.colors.cyan(f)).join(", ");
+            log.raw(`   ${log.colors.dim("Applied:")} ${files}`);
+          }
+          
+          log.raw(`   ${log.colors.dim("Model:")} ${log.colors.magenta(entry.model)}`);
+          if (i < branchLogs.length - 1) log.raw("");
         });
+        log.raw("");
       }
       rl.prompt();
       return;
@@ -279,7 +609,7 @@ const cliProvider = String((argv as any).provider || "");
 
     if (cmd === "clear-log") {
       await clearSessionLogs(repo);
-      log.info("Session logs cleared");
+      log.success("Session logs cleared");
       rl.prompt();
       return;
     }
@@ -293,13 +623,24 @@ const cliProvider = String((argv as any).provider || "");
         return;
       }
       
+      log.step("Executing", shellCmd);
       const result = await runShell(shellCmd.split(" "), repo);
+      
       if (result.ok) {
-        console.log(result.data.stdout);
-        if (result.data.stderr) console.error(result.data.stderr);
-        log.info(`Exit code: ${result.data.code}`);
+        if (result.data.stdout) {
+          log.raw(result.data.stdout);
+        }
+        if (result.data.stderr) {
+          log.raw(log.colors.yellow(result.data.stderr));
+        }
+        const code = result.data.code;
+        if (code === 0) {
+          log.success(`Command completed successfully`);
+        } else {
+          log.warn(`Command exited with code ${code}`);
+        }
       } else {
-        log.error("Shell command failed:", result.error);
+        log.error("Shell command failed:", (result as any).error);
       }
       rl.prompt();
       return;
@@ -307,35 +648,45 @@ const cliProvider = String((argv as any).provider || "");
 
     // Help command
     if (cmd === "help") {
-      console.log(`
-📚 TermCode Commands:
-  
-  General:
-    <task>           - Execute a coding task
-    help            - Show this help
-    exit/quit       - Exit session
-  
-  Configuration:
-    /provider <id>   - Switch provider (${Object.keys(registry).join(", ")})
-    /model <id>      - Switch model
-    /keys           - Show API key status
-    /whoami         - Show current session info
-  
-  Git Workflow:
-    rollback        - Discard all changes and return to main
-    merge           - Merge changes to main
-    pr "title"      - Create GitHub PR
-  
-  Development:
-    test            - Run tests
-    lint            - Run linter
-    build           - Run build
-    !<cmd>          - Execute shell command
-  
-  Logging:
-    log             - Show session history
-    clear-log       - Clear all logs
-`);
+      log.raw("");
+      log.raw(log.colors.bright("📚 TermCode Commands:"));
+      log.raw("");
+      
+      log.raw(log.colors.cyan("  General:"));
+      log.raw(`    ${log.colors.magenta("<task>")}           ${log.colors.dim("- Execute a coding task")}`);
+      log.raw(`    ${log.colors.magenta("help")}            ${log.colors.dim("- Show this help")}`);
+      log.raw(`    ${log.colors.magenta("exit/quit")}       ${log.colors.dim("- Exit session")}`);
+      log.raw("");
+      
+      log.raw(log.colors.cyan("  Configuration:"));
+      log.raw(`    ${log.colors.magenta("/provider <id>")}   ${log.colors.dim("- Switch provider")} ${log.colors.dim("(" + Object.keys(registry).join(", ") + ")")}`);
+      log.raw(`    ${log.colors.magenta("/model <id>")}      ${log.colors.dim("- Switch model")}`);
+      log.raw(`    ${log.colors.magenta("/keys")}           ${log.colors.dim("- Show API key status")}`);
+      log.raw(`    ${log.colors.magenta("/health")}         ${log.colors.dim("- Check provider health and connectivity")}`);
+      log.raw(`    ${log.colors.magenta("/whoami")}         ${log.colors.dim("- Show current session info")}`);
+      log.raw(`    ${log.colors.magenta("/budget")}         ${log.colors.dim("- Show budget and usage status")}`);
+      log.raw(`    ${log.colors.magenta("/sessions")}       ${log.colors.dim("- Show recent sessions")}`);
+      log.raw(`    ${log.colors.magenta("/config")}         ${log.colors.dim("- Configuration management commands")}`);
+      log.raw("");
+      
+      log.raw(log.colors.cyan("  Git Workflow:"));
+      log.raw(`    ${log.colors.magenta("rollback")}        ${log.colors.dim("- Discard all changes and return to main")}`);
+      log.raw(`    ${log.colors.magenta("merge")}           ${log.colors.dim("- Merge changes to main")}`);
+      log.raw(`    ${log.colors.magenta('pr "title"')}      ${log.colors.dim("- Create GitHub PR")}`);
+      log.raw("");
+      
+      log.raw(log.colors.cyan("  Development:"));
+      log.raw(`    ${log.colors.magenta("test")}            ${log.colors.dim("- Run tests")}`);
+      log.raw(`    ${log.colors.magenta("lint")}            ${log.colors.dim("- Run linter")}`);
+      log.raw(`    ${log.colors.magenta("build")}           ${log.colors.dim("- Run build")}`);
+      log.raw(`    ${log.colors.magenta("!<cmd>")}          ${log.colors.dim("- Execute shell command")}`);
+      log.raw("");
+      
+      log.raw(log.colors.cyan("  Logging:"));
+      log.raw(`    ${log.colors.magenta("log")}             ${log.colors.dim("- Show session history")}`);
+      log.raw(`    ${log.colors.magenta("clear-log")}       ${log.colors.dim("- Clear all logs")}`);
+      log.raw("");
+      
       rl.prompt();
       return;
     }
@@ -349,4 +700,16 @@ const cliProvider = String((argv as any).provider || "");
     log.info("Goodbye!");
     process.exit(0);
   });
+
+  } catch (error) {
+    if (error instanceof Error) {
+      log.error("Fatal error:", error.message);
+      if (process.env.DEBUG) {
+        console.error(error.stack);
+      }
+    } else {
+      log.error("Unknown error occurred");
+    }
+    process.exit(1);
+  }
 })();

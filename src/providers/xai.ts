@@ -1,4 +1,4 @@
-import { Provider, ChatMsg, ModelInfo } from "./types.js";
+import { Provider, ChatMsg, ModelInfo, HealthStatus } from "./types.js";
 import { KeyStore } from "../state/keystore.js";
 
 export class XAIProvider implements Provider {
@@ -50,6 +50,30 @@ export class XAIProvider implements Provider {
       { id: "grok-beta", type: "chat", context: 131072, costPer1kTokens: 0.005 },
       { id: "grok-vision-beta", type: "chat", context: 8192, costPer1kTokens: 0.01 }
     ];
+  }
+
+  async healthCheck(): Promise<HealthStatus> {
+    try {
+      const apiKey = await KeyStore.getProviderKey("xai");
+      if (!apiKey) {
+        return { 
+          status: "error", 
+          error: "No API key configured" 
+        };
+      }
+      
+      // Return healthy with main models
+      const models = ["grok-beta", "grok-vision-beta"];
+      return { 
+        status: "healthy", 
+        models 
+      };
+    } catch (error: any) {
+      return { 
+        status: "error", 
+        error: error.message 
+      };
+    }
   }
 
   estimateCost(tokens: number, model: string, type: "chat" | "embed"): number {

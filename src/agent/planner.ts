@@ -84,7 +84,7 @@ export async function runTask(repo: string, task: string, dry = false, model?: s
   // 7) Commit changes
   if (!dry && applied.length > 0) {
     const commit = commitAll(repo, `termcode: ${task}`);
-    if (!commit.ok) log.warn("Commit failed:", commit.error);
+    if (!commit.ok) log.warn("Commit failed:", (commit as any).error);
     else log.info("Changes committed");
   }
 

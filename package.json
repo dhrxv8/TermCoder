@@ -15,7 +15,7 @@
     "url": "https://github.com/dhrxv8/TermCoder/issues"
   },
   "bin": {
-    "termcode": "dist/index.js"
+    "termcode": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc -p .",
@@ -35,12 +35,19 @@
     "cohere-ai": "^6.2.2",
     "node-fetch": "^3.3.2",
     "yargs": "^17.7.2",
-    "undici": "^6.19.8"
+    "undici": "^6.19.8",
+    "ink": "^4.4.1",
+    "react": "^18.2.0",
+    "ink-use-stdout-dimensions": "^1.0.5",
+    "ink-text-input": "^5.0.1",
+    "ink-select-input": "^5.0.0",
+    "ink-box": "^3.0.0"
   },
   "devDependencies": {
     "typescript": "^5.5.4",
     "@types/node": "^20.14.10",
     "@types/yargs": "^17.0.32",
-    "@types/inquirer": "^9.0.7"
+    "@types/inquirer": "^9.0.7",
+    "@types/react": "^18.2.0"
   }
 }

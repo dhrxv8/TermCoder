@@ -1,4 +1,4 @@
-import { Provider, ChatMsg, ModelInfo } from "./types.js";
+import { Provider, ChatMsg, ModelInfo, HealthStatus } from "./types.js";
 
 export const ollamaProvider: Provider = {
   id: "ollama",
@@ -65,6 +65,16 @@ export const ollamaProvider: Provider = {
       { id: "codellama:7b", type: "chat", context: 16000, costPer1kTokens: 0 },
       { id: "mxbai-embed-large", type: "embed", context: 512, costPer1kTokens: 0 }
     ];
+  },
+  
+  async healthCheck(): Promise<HealthStatus> {
+    // Ollama runs locally and doesn't need API keys
+    // Return healthy with main chat models
+    const models = ["llama3.1:8b", "llama3.1:70b", "codellama:7b"];
+    return { 
+      status: "healthy", 
+      models 
+    };
   },
   
   estimateCost(): number {

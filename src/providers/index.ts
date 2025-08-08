@@ -2,13 +2,20 @@ import { Provider, ProviderId } from "./types.js";
 import { openaiProvider } from "./openai.js";
 import { anthropicProvider } from "./anthropic.js";
 import { ollamaProvider } from "./ollama.js";
+import { xaiProvider } from "./xai.js";
+import { googleProvider } from "./google.js";
+import { mistralProvider } from "./mistral.js";
+import { cohereProvider } from "./cohere.js";
 
-// Start with core providers - others can be added later
+// Complete multi-provider registry
 export const registry: Record<string, Provider> = {
   openai: openaiProvider,
   anthropic: anthropicProvider,
+  xai: xaiProvider,
+  google: googleProvider,
+  mistral: mistralProvider,
+  cohere: cohereProvider,
   ollama: ollamaProvider
-  // TODO: Add xai, google, mistral, cohere providers
 };
 
 export function getProvider(id: string): Provider {

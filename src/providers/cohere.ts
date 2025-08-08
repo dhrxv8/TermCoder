@@ -1,4 +1,4 @@
-import { Provider, ChatMsg, ModelInfo } from "./types.js";
+import { Provider, ChatMsg, ModelInfo, HealthStatus } from "./types.js";
 import { KeyStore } from "../state/keystore.js";
 
 export class CohereProvider implements Provider {
@@ -87,6 +87,30 @@ export class CohereProvider implements Provider {
       { id: "embed-english-v3.0", type: "embed", context: 512, costPer1kTokens: 0.0001 },
       { id: "embed-multilingual-v3.0", type: "embed", context: 512, costPer1kTokens: 0.0001 }
     ];
+  }
+
+  async healthCheck(): Promise<HealthStatus> {
+    try {
+      const apiKey = await KeyStore.getProviderKey("cohere");
+      if (!apiKey) {
+        return { 
+          status: "error", 
+          error: "No API key configured" 
+        };
+      }
+      
+      // Return healthy with main chat models
+      const models = ["command-r-plus", "command-r", "command"];
+      return { 
+        status: "healthy", 
+        models 
+      };
+    } catch (error: any) {
+      return { 
+        status: "error", 
+        error: error.message 
+      };
+    }
   }
 
   estimateCost(tokens: number, model: string, type: "chat" | "embed"): number {

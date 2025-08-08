@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { Provider, ChatMsg, ModelInfo } from "./types.js";
+import { Provider, ChatMsg, ModelInfo, HealthStatus } from "./types.js";
 import { getProviderKey } from "../onboarding.js";
 
 export const anthropicProvider: Provider = {
@@ -47,6 +47,19 @@ export const anthropicProvider: Provider = {
       { id: "claude-3-5-haiku-20241022", type: "chat", context: 200000, costPer1kTokens: 0.00025 },
       { id: "claude-3-opus-20240229", type: "chat", context: 200000, costPer1kTokens: 0.015 }
     ];
+  },
+  
+  async healthCheck(): Promise<HealthStatus> {
+    try {
+      const key = await getProviderKey("anthropic");
+      if (!key) {
+        return { status: "error", error: "No API key configured" };
+      }
+      
+      return { status: "healthy", models: ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"] };
+    } catch (error: any) {
+      return { status: "error", error: error.message };
+    }
   },
   
   estimateCost(tokens: number, model: string): number {

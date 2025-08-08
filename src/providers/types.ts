@@ -10,6 +10,13 @@ export interface ModelInfo {
   costPer1kTokens?: number;
 }
 
+export interface HealthStatus {
+  status: "healthy" | "degraded" | "error";
+  latency?: number;
+  error?: string;
+  models?: string[];
+}
+
 export interface Provider {
   id: string;
   name: string;
@@ -28,6 +35,9 @@ export interface Provider {
   }): Promise<number[][]>;
   
   listModels(): Promise<ModelInfo[]>;
+  
+  // Health check
+  healthCheck(): Promise<HealthStatus>;
   
   // Cost estimation
   estimateCost?(tokens: number, model: string, type: "chat" | "embed"): number;

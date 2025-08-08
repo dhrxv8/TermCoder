@@ -5,7 +5,8 @@ export interface RetrievalChunk {
   start: number; // 1-based line
   end: number;   // inclusive
   text: string;
-  score: number; // similarity score
+  score?: number; // similarity score
+  embedding?: number[]; // vector embedding
 }
 
 export interface PlanStep {

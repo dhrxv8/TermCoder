@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Provider, ChatMsg, ModelInfo } from "./types.js";
+import { Provider, ChatMsg, ModelInfo, HealthStatus } from "./types.js";
 import { KeyStore } from "../state/keystore.js";
 
 export class GoogleProvider implements Provider {
@@ -78,6 +78,30 @@ export class GoogleProvider implements Provider {
       { id: "text-embedding-004", type: "embed", context: 2048, costPer1kTokens: 0.00001 },
       { id: "embedding-001", type: "embed", context: 2048, costPer1kTokens: 0.00001 }
     ];
+  }
+
+  async healthCheck(): Promise<HealthStatus> {
+    try {
+      const apiKey = await KeyStore.getProviderKey("google");
+      if (!apiKey) {
+        return { 
+          status: "error", 
+          error: "No API key configured" 
+        };
+      }
+      
+      // Return healthy with main chat models
+      const models = ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro"];
+      return { 
+        status: "healthy", 
+        models 
+      };
+    } catch (error: any) {
+      return { 
+        status: "error", 
+        error: error.message 
+      };
+    }
   }
 
   estimateCost(tokens: number, model: string, type: "chat" | "embed"): number {

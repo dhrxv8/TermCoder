@@ -24,7 +24,12 @@ const PROVIDER_HELP = {
 };
 
 export async function runOnboarding(): Promise<AppConfig> {
-  console.log("\\n🚀 Welcome to TermCode — first-run setup:\\n");
+  console.log("");
+  console.log("🚀 Welcome to TermCode");
+  console.log("   Universal terminal coding agent with multi-provider AI support");
+  console.log("");
+  console.log("Let's get you set up...");
+  console.log("");
 
   // Select providers
   const { providers } = await inquirer.prompt([{
@@ -87,69 +92,83 @@ export async function runOnboarding(): Promise<AppConfig> {
   };
 
   // Tool configuration
-  const { tools } = await inquirer.prompt([
+  const { enableShell, enableGit, testsBehavior, enableBrowser } = await inquirer.prompt([
     {
       type: "confirm",
-      name: "shell",
+      name: "enableShell",
       message: "Enable shell commands?",
       default: true
     },
     {
       type: "confirm",
-      name: "git",
+      name: "enableGit",
       message: "Enable Git integration?",
       default: true
     },
     {
       type: "list",
-      name: "tests",
+      name: "testsBehavior",
       message: "Test runner behavior:",
       choices: [
         { name: "Auto-detect and run tests", value: "auto" },
-        { name: "Always run tests", value: true },
-        { name: "Never run tests", value: false }
+        { name: "Off (never run tests)", value: false }
       ],
       default: "auto"
     },
     {
       type: "confirm",
-      name: "browser",
+      name: "enableBrowser",
       message: "Enable browser automation? (experimental)",
       default: false
     }
   ]);
 
   // Budget setting
-  const { budget } = await inquirer.prompt([{
-    type: "number",
-    name: "budget",
+  const { monthlyBudget } = await inquirer.prompt([{
+    type: "input",
+    name: "monthlyBudget",
     message: "Monthly budget limit (USD):",
-    default: 10,
-    validate: (input: number) => input > 0 || "Budget must be greater than 0"
+    default: "10"
   }]);
+
+  const tools = {
+    shell: Boolean(enableShell),
+    git: Boolean(enableGit),
+    tests: testsBehavior === "auto" ? "auto" as const : Boolean(testsBehavior),
+    browser: Boolean(enableBrowser),
+  };
 
   const config: AppConfig = {
     defaultProvider,
-    models: Object.fromEntries(providers.map((p: string) => [p, models[p] || {}])),
-    tools: {
-      shell: tools.shell,
-      git: tools.git,
-      tests: tools.tests,
-      browser: tools.browser
+    models: {
+      openai:   { chat: "gpt-4o-mini",        embed: "text-embedding-3-small" },
+      anthropic:{ chat: "claude-3-5-sonnet" },
+      xai:      { chat: "grok-2" },
+      google:   { chat: "gemini-1.5-pro" },
+      mistral:  { chat: "mistral-large-latest" },
+      cohere:   { chat: "command-r-plus",     embed: "embed-english-v3.0" },
+      ollama:   { chat: "llama3.1:8b" }
     },
-    routing: {
-      fallback: [defaultProvider, ...providers.filter((p: string) => p !== defaultProvider)],
-      budgetUSDMonthly: budget
-    }
+    tools,
+    routing: { fallback: [defaultProvider], budgetUSDMonthly: Number(monthlyBudget || 10) }
   };
 
   await saveConfig(config);
 
-  console.log("\\n✅ Setup complete!");
+  console.log("");
+  console.log("✅ Setup complete!");
+  console.log("");
   console.log(`🎯 Default provider: ${PROVIDER_NAMES[defaultProvider as keyof typeof PROVIDER_NAMES]}`);
-  console.log(`💰 Monthly budget: $${budget}`);
+  console.log(`💰 Monthly budget: $${monthlyBudget}`);  
   console.log("🔐 API keys stored securely in OS keychain");
-  console.log("\\nYou're ready to start coding!\\n");
+  console.log("");
+  console.log("💡 Quick tips:");
+  console.log("  • Use /help to see all commands");
+  console.log("  • Use /config to manage settings");
+  console.log("  • Use /health to check provider status");
+  console.log("");
+  console.log("🚀 You're ready to start coding!");
+  console.log("");
 
   return config;
 }
