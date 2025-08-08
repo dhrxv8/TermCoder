@@ -1,59 +1,49 @@
 import OpenAI from "openai";
 import { Provider, ChatMsg, ModelInfo } from "./types.js";
-import { KeyStore } from "../state/keystore.js";
+import { getProviderKey } from "../onboarding.js";
 
-export class OpenAIProvider implements Provider {
-  id = "openai" as const;
-  name = "OpenAI";
-  supportsTools = true;
-  maxContext = 128000;
-  requiresKey = true;
+export const openaiProvider: Provider = {
+  id: "openai",
+  name: "OpenAI",
+  maxContext: 128000,
+  supportsTools: true,
   
-  private client: OpenAI | null = null;
-
-  private async getClient(): Promise<OpenAI> {
-    if (!this.client) {
-      const apiKey = await KeyStore.getProviderKey("openai");
-      if (!apiKey) {
-        throw new Error("OpenAI API key not found. Run 'termcode /keys' to add it.");
-      }
-      this.client = new OpenAI({ apiKey });
+  async chat(messages: ChatMsg[], { model, temperature = 0.2, maxTokens }): Promise<string> {
+    const key = await getProviderKey("openai");
+    if (!key) {
+      throw new Error("OpenAI key not set. Run /keys or restart to configure.");
     }
-    return this.client;
-  }
-
-  async chat(messages: ChatMsg[], opts: { 
-    model: string; 
-    temperature?: number;
-    maxTokens?: number;
-  }): Promise<string> {
-    const client = await this.getClient();
     
-    const response = await client.chat.completions.create({
-      model: opts.model,
+    const client = new OpenAI({ apiKey: key });
+    const res = await client.chat.completions.create({
+      model,
+      temperature,
+      max_tokens: maxTokens,
       messages: messages.map(m => ({
         role: m.role,
         content: m.content
-      })),
-      temperature: opts.temperature ?? 0.7,
-      max_tokens: opts.maxTokens ?? 4000
+      }))
     });
-
-    return response.choices[0]?.message?.content || "";
-  }
-
-  async embed(texts: string[], opts: { model: string }): Promise<number[][]> {
-    const client = await this.getClient();
     
-    const response = await client.embeddings.create({
-      model: opts.model,
+    return res.choices[0]?.message?.content || "";
+  },
+  
+  async embed(texts: string[], { model }): Promise<number[][]> {
+    const key = await getProviderKey("openai");
+    if (!key) {
+      throw new Error("OpenAI key not set. Run /keys or restart to configure.");
+    }
+    
+    const client = new OpenAI({ apiKey: key });
+    const res = await client.embeddings.create({
+      model,
       input: texts,
       encoding_format: "float"
     });
-
-    return response.data.map(d => d.embedding);
-  }
-
+    
+    return res.data.map(d => d.embedding);
+  },
+  
   async listModels(): Promise<ModelInfo[]> {
     return [
       // Chat models
@@ -63,31 +53,26 @@ export class OpenAIProvider implements Provider {
       { id: "gpt-4", type: "chat", context: 8192, costPer1kTokens: 0.03 },
       { id: "gpt-3.5-turbo", type: "chat", context: 16384, costPer1kTokens: 0.001 },
       
-      // Embedding models  
+      // Embedding models
       { id: "text-embedding-3-large", type: "embed", context: 8192, costPer1kTokens: 0.00013 },
       { id: "text-embedding-3-small", type: "embed", context: 8192, costPer1kTokens: 0.00002 },
       { id: "text-embedding-ada-002", type: "embed", context: 8192, costPer1kTokens: 0.0001 }
     ];
-  }
-
+  },
+  
   estimateCost(tokens: number, model: string, type: "chat" | "embed"): number {
-    const models = {
-      // Chat models (per 1k tokens)
+    const costs: Record<string, number> = {
       "gpt-4o": 0.005,
       "gpt-4o-mini": 0.00015,
       "gpt-4-turbo": 0.01,
       "gpt-4": 0.03,
       "gpt-3.5-turbo": 0.001,
-      
-      // Embedding models (per 1k tokens)
       "text-embedding-3-large": 0.00013,
       "text-embedding-3-small": 0.00002,
       "text-embedding-ada-002": 0.0001
     };
-
-    const costPer1k = models[model as keyof typeof models] || 0.01; // Default fallback
+    
+    const costPer1k = costs[model] || (type === "chat" ? 0.01 : 0.0001);
     return (tokens / 1000) * costPer1k;
   }
-}
-
-export const openaiProvider = new OpenAIProvider();
+};

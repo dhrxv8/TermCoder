@@ -1,42 +1,27 @@
 import { Provider, ProviderId } from "./types.js";
 import { openaiProvider } from "./openai.js";
 import { anthropicProvider } from "./anthropic.js";
-import { xaiProvider } from "./xai.js";
-import { googleProvider } from "./google.js";
-import { mistralProvider } from "./mistral.js";
-import { cohereProvider } from "./cohere.js";
 import { ollamaProvider } from "./ollama.js";
 
-export const registry: Record<ProviderId, Provider> = {
+// Start with core providers - others can be added later
+export const registry: Record<string, Provider> = {
   openai: openaiProvider,
   anthropic: anthropicProvider,
-  xai: xaiProvider,
-  google: googleProvider,
-  mistral: mistralProvider,
-  cohere: cohereProvider,
-  ollama: ollamaProvider,
+  ollama: ollamaProvider
+  // TODO: Add xai, google, mistral, cohere providers
 };
 
-export function getProvider(id: ProviderId): Provider {
+export function getProvider(id: string): Provider {
   const provider = registry[id];
   if (!provider) {
-    throw new Error(`Unknown provider: ${id}`);
+    throw new Error(`Provider '${id}' not found. Available: ${Object.keys(registry).join(", ")}`);
   }
   return provider;
 }
 
-export function listAvailableProviders(): Provider[] {
+export function listProviders(): Provider[] {
   return Object.values(registry);
 }
 
-// Re-export types and providers for convenience
+// Re-export types
 export * from "./types.js";
-export { 
-  openaiProvider,
-  anthropicProvider, 
-  xaiProvider,
-  googleProvider,
-  mistralProvider,
-  cohereProvider,
-  ollamaProvider
-};

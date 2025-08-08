@@ -1,94 +1,59 @@
 import { promises as fs } from "node:fs";
-import path from "node:path";
 import os from "node:os";
+import path from "node:path";
 import { z } from "zod";
-import { TermCodeConfig, ProviderId, PROVIDERS } from "../providers/types.js";
 
-const ConfigSchema = z.object({
-  defaultProvider: z.enum(PROVIDERS as any),
-  models: z.record(z.object({
-    chat: z.string(),
-    embed: z.string().optional()
+const cfgDir = path.join(os.homedir(), ".termcode");
+const cfgPath = path.join(cfgDir, "config.json");
+
+export const ConfigSchema = z.object({
+  defaultProvider: z.string(),
+  models: z.record(z.string(), z.object({ 
+    chat: z.string().optional(), 
+    embed: z.string().optional() 
   })),
-  tools: z.object({
-    shell: z.boolean(),
-    git: z.boolean(),
-    tests: z.enum(["auto", "on", "off"]),
-    browser: z.boolean()
+  tools: z.object({ 
+    shell: z.boolean(), 
+    git: z.boolean(), 
+    tests: z.union([z.literal("auto"), z.boolean()]), 
+    browser: z.boolean() 
   }),
-  routing: z.object({
-    fallback: z.array(z.enum(PROVIDERS as any)),
-    budgetUSDMonthly: z.number()
-  }),
-  browser: z.object({
-    allowedDomains: z.array(z.string()),
-    headless: z.boolean()
-  }).optional()
+  routing: z.object({ 
+    fallback: z.array(z.string()), 
+    budgetUSDMonthly: z.number() 
+  })
 });
 
-const CONFIG_DIR = path.join(os.homedir(), ".termcode");
-const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+export type AppConfig = z.infer<typeof ConfigSchema>;
 
-export async function ensureConfigDir(): Promise<void> {
-  await fs.mkdir(CONFIG_DIR, { recursive: true });
-}
-
-export async function loadConfig(): Promise<TermCodeConfig | null> {
+export async function loadConfig(): Promise<AppConfig | null> {
   try {
     await ensureConfigDir();
-    const content = await fs.readFile(CONFIG_PATH, "utf8");
-    const parsed = JSON.parse(content);
-    return ConfigSchema.parse(parsed) as TermCodeConfig;
-  } catch (error) {
+    const raw = await fs.readFile(cfgPath, "utf8");
+    return ConfigSchema.parse(JSON.parse(raw));
+  } catch {
     return null;
   }
 }
 
-export async function saveConfig(config: TermCodeConfig): Promise<void> {
+export async function saveConfig(cfg: AppConfig): Promise<void> {
   await ensureConfigDir();
-  
-  // Validate config before saving
-  ConfigSchema.parse(config);
-  
-  await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2), "utf8");
+  await fs.writeFile(cfgPath, JSON.stringify(cfg, null, 2), "utf8");
+}
+
+export function configPath(): string {
+  return cfgPath;
+}
+
+async function ensureConfigDir(): Promise<void> {
+  await fs.mkdir(cfgDir, { recursive: true });
 }
 
 export async function configExists(): Promise<boolean> {
   try {
-    await fs.access(CONFIG_PATH);
+    await fs.access(cfgPath);
     return true;
   } catch {
     return false;
   }
-}
-
-export function getDefaultConfig(defaultProvider: ProviderId): TermCodeConfig {
-  const models: Record<string, { chat: string; embed?: string }> = {
-    openai: { chat: "gpt-4o-mini", embed: "text-embedding-3-small" },
-    anthropic: { chat: "claude-3-5-sonnet-20241022", embed: "text-embedding-3-small" },
-    xai: { chat: "grok-beta" },
-    google: { chat: "gemini-1.5-pro", embed: "text-embedding-004" },
-    mistral: { chat: "mistral-large-latest", embed: "mistral-embed" },
-    cohere: { chat: "command-r-plus", embed: "embed-english-v3.0" },
-    ollama: { chat: "llama3.1:8b", embed: "mxbai-embed-large" }
-  };
-
-  return {
-    defaultProvider,
-    models,
-    tools: {
-      shell: true,
-      git: true,
-      tests: "auto",
-      browser: false
-    },
-    routing: {
-      fallback: [defaultProvider],
-      budgetUSDMonthly: 20
-    },
-    browser: {
-      allowedDomains: ["localhost", "*.docs.*", "github.com", "stackoverflow.com"],
-      headless: true
-    }
-  };
 }

@@ -8,7 +8,7 @@ import { log } from "../util/logging.js";
 import { getProvider, ProviderId } from "../providers/index.js";
 import { loadConfig } from "../state/config.js";
 
-export async function runTask(repo: string, task: string, dry = false, model?: string, branchName?: string, providerId?: ProviderId) {
+export async function runTask(repo: string, task: string, dry = false, model?: string, branchName?: string, providerId?: string) {
   // 1) Ensure index exists (very naive check)
   try { await buildIndex(repo); } catch (e) { log.warn("index build failed:", e); }
 
@@ -19,10 +19,9 @@ export async function runTask(repo: string, task: string, dry = false, model?: s
     return;
   }
   
-  const currentProvider = providerId || (config.defaultProvider as ProviderId);
+  const currentProvider = providerId || config.defaultProvider;
   const provider = getProvider(currentProvider);
   const chatModel = model || config.models[currentProvider]?.chat;
-  const embedModel = config.models[currentProvider]?.embed || config.models.openai?.embed || "text-embedding-3-small";
   
   if (!chatModel) {
     log.error(`No chat model configured for provider ${currentProvider}`);
@@ -32,23 +31,19 @@ export async function runTask(repo: string, task: string, dry = false, model?: s
   // 3) Make a query embedding and retrieve
   let chunks: any[] = [];
   try {
-    // Use embedding provider (fallback to OpenAI if current provider doesn't support embeddings)
+    // Try to get embeddings for better context retrieval
+    const embedModel = config.models[currentProvider]?.embed || config.models.openai?.embed || "text-embedding-3-small";
     let embedProvider = provider;
-    try {
-      const qEmb = await embedProvider.embed([task], { model: embedModel });
-      chunks = await retrieve(repo, qEmb[0], 10);
-    } catch (embedError) {
-      // Fallback to OpenAI for embeddings if current provider doesn't support them
-      if (currentProvider !== "openai" && config.models.openai) {
-        const openaiProvider = getProvider("openai");
-        const qEmb = await openaiProvider.embed([task], { model: config.models.openai.embed || "text-embedding-3-small" });
-        chunks = await retrieve(repo, qEmb[0], 10);
-      } else {
-        log.warn("No embedding support available, proceeding without retrieval");
-      }
+    
+    // Fallback to OpenAI for embeddings if current provider doesn't support them
+    if (currentProvider !== "openai" && !config.models[currentProvider]?.embed && config.models.openai) {
+      embedProvider = getProvider("openai");
     }
+    
+    const qEmb = await embedProvider.embed([task], { model: embedModel });
+    chunks = await retrieve(repo, qEmb[0], 10);
   } catch (e) {
-    log.warn("Retrieval failed:", e);
+    log.warn("Embedding/retrieval failed, proceeding without context:", e);
   }
 
   // 4) Get memory file if present

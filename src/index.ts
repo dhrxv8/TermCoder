@@ -12,19 +12,18 @@ import { runTests, runLinter, runBuild } from "./tools/test.js";
 import { runShell } from "./tools/shell.js";
 import { getSessionLogs, clearSessionLogs } from "./util/sessionLog.js";
 import { log } from "./util/logging.js";
-import { runOnboarding, quickKeySetup } from "./onboarding.js";
-import { loadConfig, configExists, saveConfig } from "./state/config.js";
-import { KeyStore } from "./state/keystore.js";
-import { getProvider, registry, ProviderId, PROVIDERS } from "./providers/index.js";
+import { runOnboarding, getProviderKey, setProviderKey, listProviderKeys } from "./onboarding.js";
+import { loadConfig, configExists } from "./state/config.js";
+import { getProvider, registry } from "./providers/index.js";
 
 const argv = yargs(hideBin(process.argv))
-  .scriptName("termcoder")
+  .scriptName("termcode")
   .usage("$0 [task] [options]")
   .positional("task", { describe: "High-level request (feature/refactor/fix)", type: "string" })
   .option("repo", { type: "string", demandOption: true, describe: "Path to repo" })
   .option("dry", { type: "boolean", default: false, describe: "Dry run (don't write changes)" })
   .option("model", { type: "string", describe: "Model to use (overrides config)" })
-  .option("provider", { type: "string", describe: "Provider to use (overrides config)", choices: PROVIDERS })
+  .option("provider", { type: "string", describe: "Provider to use (overrides config)" })
   .help().parseSync();
 
 const repo = path.resolve(String((argv as any).repo));
@@ -35,19 +34,14 @@ const cliProvider = String((argv as any).provider || "");
 
 (async () => {
   // Check if first run (no config)
-  if (!(await configExists())) {
-    await runOnboarding();
-  }
-
-  // Load configuration
   let config = await loadConfig();
   if (!config) {
-    log.error("Failed to load configuration. Please run onboarding again.");
-    process.exit(1);
+    console.log("🚀 Welcome to TermCode — first-run setup:");
+    config = await runOnboarding();
   }
 
   // Override with CLI options
-  const currentProvider = (cliProvider as ProviderId) || config.defaultProvider;
+  const currentProvider = cliProvider || config.defaultProvider;
   const currentModel = cliModel || config.models[currentProvider]?.chat;
 
   if (!currentModel) {
@@ -95,7 +89,7 @@ const cliProvider = String((argv as any).provider || "");
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: "[termcoder] > ",
+    prompt: "[termcode] > ",
   });
 
   rl.prompt();
@@ -112,6 +106,87 @@ const cliProvider = String((argv as any).provider || "");
     // Exit commands
     if (cmd === "exit" || cmd === "quit") {
       rl.close();
+      return;
+    }
+
+    // Provider/Model switching commands
+    if (input.startsWith("/provider ")) {
+      const providerId = input.split(" ")[1];
+      const availableProviders = Object.keys(registry);
+      
+      if (!availableProviders.includes(providerId)) {
+        log.error(`Unknown provider: ${providerId}. Available: ${availableProviders.join(", ")}`);
+        rl.prompt();
+        return;
+      }
+      
+      // Check if provider has required key (except for ollama)
+      if (providerId !== "ollama" && !(await getProviderKey(providerId))) {
+        log.warn(`No API key found for ${providerId}. Please add one:`);
+        const inquirer = await import("inquirer");
+        const { key } = await inquirer.default.prompt([{
+          type: "password",
+          name: "key",
+          message: `API key for ${providerId}:`,
+          mask: "•"
+        }]);
+        if (key) {
+          await setProviderKey(providerId, key);
+          log.info("✓ API key saved");
+        } else {
+          log.error("No API key provided");
+          rl.prompt();
+          return;
+        }
+      }
+      
+      sessionState.provider = providerId;
+      sessionState.model = sessionState.config.models[providerId]?.chat || "";
+      
+      if (!sessionState.model) {
+        log.error(`No chat model configured for ${providerId}`);
+        rl.prompt();
+        return;
+      }
+      
+      log.info(`Provider → ${providerId} (${sessionState.model})`);
+      rl.prompt();
+      return;
+    }
+    
+    if (input.startsWith("/model ")) {
+      const modelId = input.slice(7).trim();
+      sessionState.model = modelId;
+      log.info(`Model → ${modelId}`);
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/keys") {
+      console.log("\\n🔐 API Key Status:");
+      const providerKeys = await listProviderKeys();
+      const availableProviders = Object.keys(registry);
+      
+      for (const providerId of availableProviders) {
+        if (providerId === "ollama") {
+          console.log(`  ${providerId}: ✓ local (no key needed)`);
+        } else {
+          const hasKey = providerKeys.includes(providerId);
+          console.log(`  ${providerId}: ${hasKey ? "✓ configured" : "❌ missing"}`);
+        }
+      }
+      console.log("\\nUse /provider <name> to add missing keys");
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/whoami") {
+      console.log("\\n🤖 Current Session:");
+      console.log(`  Provider: ${sessionState.provider}`);
+      console.log(`  Model: ${sessionState.model}`);
+      console.log(`  Branch: ${branchName}`);
+      console.log(`  Tools: ${Object.entries(sessionState.config.tools).filter(([_, enabled]) => enabled).map(([name]) => name).join(", ")}`);
+      rl.prompt();
       return;
     }
     
@@ -150,7 +225,7 @@ const cliProvider = String((argv as any).provider || "");
       try {
         const logs = await getSessionLogs(repo);
         const branchLogs = logs.filter(l => l.branchName === branchName);
-        const body = branchLogs.map(l => `• ${l.task}`).join("\n") + "\n\n🤖 Generated with TermCode";
+        const body = branchLogs.map(l => `• ${l.task}`).join("\\n") + "\\n\\n🤖 Generated with TermCode";
         
         const prUrl = await createPullRequest(repo, branchName, title, body);
         log.info(`✅ Created PR: ${prUrl}`);
@@ -191,7 +266,7 @@ const cliProvider = String((argv as any).provider || "");
       if (branchLogs.length === 0) {
         log.info("No session logs found for this branch");
       } else {
-        console.log("\n📋 Session Log:");
+        console.log("\\n📋 Session Log:");
         branchLogs.forEach((entry, i) => {
           console.log(`${i + 1}. ${entry.task}`);
           console.log(`   Applied: ${entry.applied.join(", ") || "none"}`);
@@ -230,68 +305,6 @@ const cliProvider = String((argv as any).provider || "");
       return;
     }
 
-    // Provider/Model switching commands
-    if (input.startsWith("/provider ")) {
-      const providerId = input.split(" ")[1] as ProviderId;
-      if (!PROVIDERS.includes(providerId)) {
-        log.error(`Unknown provider: ${providerId}. Available: ${PROVIDERS.join(", ")}`);
-        rl.prompt();
-        return;
-      }
-      
-      // Check if provider has required key
-      const provider = getProvider(providerId);
-      if (provider.requiresKey && !(await KeyStore.hasProviderKey(providerId))) {
-        log.warn(`No API key found for ${providerId}. Adding key...`);
-        await quickKeySetup(providerId);
-      }
-      
-      sessionState.provider = providerId;
-      sessionState.model = sessionState.config.models[providerId]?.chat || "";
-      
-      if (!sessionState.model) {
-        log.error(`No chat model configured for ${providerId}`);
-        rl.prompt();
-        return;
-      }
-      
-      log.info(`Provider → ${providerId} (${sessionState.model})`);
-      rl.prompt();
-      return;
-    }
-    
-    if (input.startsWith("/model ")) {
-      const modelId = input.slice(7).trim();
-      sessionState.model = modelId;
-      log.info(`Model → ${modelId}`);
-      rl.prompt();
-      return;
-    }
-    
-    if (cmd === "/keys") {
-      console.log("\n🔐 API Key Management:");
-      for (const providerId of PROVIDERS) {
-        const provider = registry[providerId];
-        if (!provider.requiresKey) continue;
-        
-        const hasKey = await KeyStore.hasProviderKey(providerId);
-        console.log(`  ${providerId}: ${hasKey ? '✅ configured' : '❌ missing'}`);
-      }
-      console.log("\nAdd key: /provider <provider-name>");
-      rl.prompt();
-      return;
-    }
-    
-    if (cmd === "/whoami") {
-      console.log(`\n🤖 Current Session:`);
-      console.log(`  Provider: ${sessionState.provider}`);
-      console.log(`  Model: ${sessionState.model}`);
-      console.log(`  Branch: ${branchName}`);
-      console.log(`  Tools: ${Object.entries(sessionState.config.tools).filter(([_, enabled]) => enabled).map(([name]) => name).join(", ")}`);
-      rl.prompt();
-      return;
-    }
-
     // Help command
     if (cmd === "help") {
       console.log(`
@@ -303,7 +316,7 @@ const cliProvider = String((argv as any).provider || "");
     exit/quit       - Exit session
   
   Configuration:
-    /provider <id>   - Switch provider (${PROVIDERS.join(", ")})
+    /provider <id>   - Switch provider (${Object.keys(registry).join(", ")})
     /model <id>      - Switch model
     /keys           - Show API key status
     /whoami         - Show current session info

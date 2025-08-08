@@ -1,6 +1,6 @@
 export type ChatMsg = { 
   role: "system" | "user" | "assistant"; 
-  content: string;
+  content: string; 
 };
 
 export interface ModelInfo {
@@ -11,53 +11,26 @@ export interface ModelInfo {
 }
 
 export interface Provider {
-  id: "openai" | "anthropic" | "xai" | "google" | "mistral" | "cohere" | "ollama";
+  id: string;
   name: string;
-  supportsTools: boolean;
   maxContext: number;
-  requiresKey: boolean;
-
-  // Chat completion
+  supportsTools: boolean;
+  
+  // Core methods
   chat(messages: ChatMsg[], opts: { 
     model: string; 
-    temperature?: number;
+    temperature?: number; 
     maxTokens?: number;
   }): Promise<string>;
-
-  // Embeddings
-  embed(texts: string[], opts: { model: string }): Promise<number[][]>;
-
-  // Model list (for picker)
+  
+  embed(texts: string[], opts: { 
+    model: string; 
+  }): Promise<number[][]>;
+  
   listModels(): Promise<ModelInfo[]>;
-
+  
   // Cost estimation
-  estimateCost(tokens: number, model: string, type: "chat" | "embed"): number;
-}
-
-export interface ProviderConfig {
-  chat: string;
-  embed?: string;
-}
-
-export interface TermCodeConfig {
-  defaultProvider: ProviderId;
-  models: Record<string, ProviderConfig>;
-  tools: {
-    shell: boolean;
-    git: boolean;
-    tests: "auto" | "on" | "off";
-    browser: boolean;
-  };
-  routing: {
-    fallback: ProviderId[];
-    budgetUSDMonthly: number;
-  };
-  browser?: {
-    allowedDomains: string[];
-    headless: boolean;
-  };
+  estimateCost?(tokens: number, model: string, type: "chat" | "embed"): number;
 }
 
 export type ProviderId = "openai" | "anthropic" | "xai" | "google" | "mistral" | "cohere" | "ollama";
-
-export const PROVIDERS: ProviderId[] = ["openai", "anthropic", "xai", "google", "mistral", "cohere", "ollama"];

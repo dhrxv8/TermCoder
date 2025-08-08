@@ -17,7 +17,7 @@ export async function buildIndex(repo: string, outPath = ".termcode-index.json")
   
   // Try current provider first
   try {
-    embedProvider = getProvider(config.defaultProvider as any);
+    embedProvider = getProvider(config.defaultProvider);
     embedModel = config.models[config.defaultProvider]?.embed;
     if (!embedModel) throw new Error("No embed model");
     // Test if provider supports embeddings
