@@ -1,6 +1,6 @@
 {
   "name": "termcode",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "Universal terminal coding agent with multi-provider AI support - Claude Code alternative",
   "keywords": ["ai", "coding", "terminal", "chatgpt", "openai", "claude-code", "anthropic", "xai", "google", "mistral", "cohere", "ollama"],
