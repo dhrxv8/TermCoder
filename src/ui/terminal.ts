@@ -149,6 +149,19 @@ export class TerminalUI {
           { cmd: "clear-log", desc: "Clear session history" },
           { cmd: "/config", desc: "Configuration management commands" }
         ]
+      },
+      {
+        title: "🚀 Advanced Features",
+        commands: [
+          { cmd: "/hooks", desc: "Show active system hooks" },
+          { cmd: "/security", desc: "Show security sandbox statistics" },
+          { cmd: "/diffs", desc: "Show diff management status" },
+          { cmd: "/intelligence", desc: "Show intelligent error recovery stats" },
+          { cmd: "/performance", desc: "Show performance monitoring data" },
+          { cmd: "/plugins", desc: "Show plugin system status" },
+          { cmd: "/suggestions", desc: "Show smart suggestion statistics" },
+          { cmd: "/workspace", desc: "Show current workspace information" }
+        ]
       }
     ];
     

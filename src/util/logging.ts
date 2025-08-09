@@ -64,6 +64,15 @@ export const log = {
     console.error(`${timestamp} ${prefix} ${args.join(' ')}`);
   },
   
+  // Debug messages (only shown in debug mode)
+  debug: (...args: any[]) => {
+    if (process.env.DEBUG || process.env.NODE_ENV === 'development') {
+      const timestamp = colorize(formatTimestamp(), 'dim');
+      const prefix = colorize('debug', 'dim');
+      console.log(`${timestamp} ${prefix} ${args.join(' ')}`);
+    }
+  },
+  
   // Step/action messages
   step: (step: string, ...args: any[]) => {
     const timestamp = colorize(formatTimestamp(), 'dim');

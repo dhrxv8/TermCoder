@@ -23,6 +23,13 @@ import { workspaceManager } from "./workspace/manager.js";
 import { mcpClient } from "./mcp/client.js";
 import { PipelineProcessor } from "./tools/pipe.js";
 import { sandbox } from "./security/sandbox.js";
+import { enhancedSandbox } from "./security/enhanced-sandbox.js";
+import { hookManager } from "./hooks/manager.js";
+import { intelligentErrorRecovery } from "./intelligence/error-recovery.js";
+import { enhancedDiffManager } from "./agent/enhanced-diff.js";
+import { performanceMonitor } from "./monitoring/performance.js";
+import { smartSuggestionEngine } from "./cli/smart-suggestions.js";
+import { pluginSystem } from "./plugins/system.js";
 
 const argv = yargs(hideBin(process.argv))
   .scriptName("termcode")
@@ -161,8 +168,12 @@ const launchUI = Boolean((argv as any).ui);
     log.step("Loaded session", `${session.recentTasks.length} recent tasks`);
   }
   
-  // Initialize workspace manager
+  // Initialize enhanced systems
   await workspaceManager.initialize();
+  await hookManager.initialize();
+  await enhancedSandbox.initialize();
+  await performanceMonitor.initialize();
+  await pluginSystem.initialize();
   
   // Show project info
   const projectInfo = await detectProjectType(repo);
@@ -646,6 +657,169 @@ const launchUI = Boolean((argv as any).ui);
       return;
     }
 
+    // Enhanced system commands
+    if (cmd === "/hooks") {
+      const hooks = hookManager.listHooks();
+      log.raw("");
+      log.raw(log.colors.bright("🔗 Active Hooks:"));
+      hooks.forEach(hook => {
+        const status = hook.enabled ? log.colors.green("✓") : log.colors.red("❌");
+        log.raw(`  ${status} ${log.colors.cyan(hook.name)} - ${log.colors.dim(hook.description)}`);
+      });
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/security") {
+      const stats = enhancedSandbox.getSecurityStats();
+      log.raw("");
+      log.raw(log.colors.bright("🛡️  Security Statistics:"));
+      log.raw(`  ${log.colors.dim("Total Violations:")} ${log.colors.yellow(stats.totalViolations.toString())}`);
+      log.raw(`  ${log.colors.dim("By Severity:")}`);
+      Object.entries(stats.violationsBySeverity).forEach(([severity, count]) => {
+        const color = severity === 'critical' ? 'red' : severity === 'high' ? 'yellow' : 'green';
+        log.raw(`    ${log.colors[color](severity)}: ${count}`);
+      });
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/diffs") {
+      const activeDiffs = enhancedDiffManager.getActiveDiffs();
+      const stats = enhancedDiffManager.getDiffStats();
+      log.raw("");
+      log.raw(log.colors.bright("📝 Diff Management:"));
+      log.raw(`  ${log.colors.dim("Active Diffs:")} ${log.colors.cyan(stats.activeDiffs.toString())}`);
+      log.raw(`  ${log.colors.dim("Success Rate:")} ${log.colors.green((stats.successRate * 100).toFixed(1) + '%')}`);
+      
+      if (activeDiffs.length > 0) {
+        log.raw(`  ${log.colors.dim("Recent:")}`);
+        activeDiffs.slice(-5).forEach(diff => {
+          const risk = diff.impact.riskLevel;
+          const color = risk === 'critical' ? 'red' : risk === 'high' ? 'yellow' : 'green';
+          log.raw(`    ${log.colors[color](risk)} ${diff.id} - ${diff.changes.length} files`);
+        });
+      }
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/intelligence") {
+      const stats = intelligentErrorRecovery.getRecoveryStats();
+      log.raw("");
+      log.raw(log.colors.bright("🧠 Intelligence Statistics:"));
+      log.raw(`  ${log.colors.dim("Total Errors:")} ${log.colors.yellow(stats.totalErrors.toString())}`);
+      log.raw(`  ${log.colors.dim("Successful Recoveries:")} ${log.colors.green(stats.successfulRecoveries.toString())}`);
+      log.raw(`  ${log.colors.dim("Average Recovery Time:")} ${log.colors.cyan((stats.averageRecoveryTime / 1000).toFixed(1) + 's')}`);
+      
+      if (stats.topErrorCategories.length > 0) {
+        log.raw(`  ${log.colors.dim("Top Error Categories:")}`);
+        stats.topErrorCategories.forEach(({ category, count }) => {
+          log.raw(`    ${log.colors.magenta(category)}: ${count}`);
+        });
+      }
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/performance") {
+      const stats = performanceMonitor.getPerformanceStats();
+      const recommendations = performanceMonitor.getOptimizationRecommendations();
+      
+      log.raw("");
+      log.raw(log.colors.bright("⚡ Performance Statistics:"));
+      log.raw(`  ${log.colors.dim("Total Metrics:")} ${log.colors.cyan(stats.overview.totalMetrics.toString())}`);
+      log.raw(`  ${log.colors.dim("Active Alerts:")} ${log.colors.yellow(stats.overview.activeAlerts.toString())}`);
+      log.raw(`  ${log.colors.dim("Avg Response Time:")} ${log.colors.magenta(Math.round(stats.overview.avgResponseTime).toString() + 'ms')}`);
+      log.raw(`  ${log.colors.dim("Success Rate:")} ${log.colors.green((stats.overview.successRate * 100).toFixed(1) + '%')}`);
+      
+      if (Object.keys(stats.breakdown.byProvider).length > 0) {
+        log.raw(`  ${log.colors.dim("By Provider:")}`);
+        Object.entries(stats.breakdown.byProvider).forEach(([provider, data]) => {
+          log.raw(`    ${log.colors.cyan(provider)}: ${Math.round(data.avgTime)}ms (${data.calls} calls)`);
+        });
+      }
+      
+      if (recommendations.length > 0) {
+        log.raw(`  ${log.colors.dim("Recommendations:")}`);
+        recommendations.slice(0, 3).forEach(rec => {
+          const priority = rec.priority === 'high' ? log.colors.red('HIGH') : 
+                          rec.priority === 'medium' ? log.colors.yellow('MED') : log.colors.green('LOW');
+          log.raw(`    ${priority} ${rec.title}`);
+          log.raw(`      ${log.colors.dim(rec.description)}`);
+        });
+      }
+      
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/plugins") {
+      const plugins = pluginSystem.listPlugins();
+      const stats = pluginSystem.getPluginStats();
+      
+      log.raw("");
+      log.raw(log.colors.bright("🔌 Plugin System:"));
+      log.raw(`  ${log.colors.dim("Total Plugins:")} ${log.colors.cyan(stats.totalPlugins.toString())}`);
+      log.raw(`  ${log.colors.dim("Enabled:")} ${log.colors.green(stats.enabledPlugins.toString())}`);
+      
+      if (Object.keys(stats.pluginsByType).length > 0) {
+        log.raw(`  ${log.colors.dim("By Type:")}`);
+        Object.entries(stats.pluginsByType).forEach(([type, count]) => {
+          log.raw(`    ${log.colors.magenta(type)}: ${count}`);
+        });
+      }
+      
+      if (plugins.length > 0) {
+        log.raw(`  ${log.colors.dim("Installed Plugins:")}`);
+        plugins.slice(0, 5).forEach(plugin => {
+          const status = plugin.enabled ? log.colors.green("✓") : log.colors.red("❌");
+          log.raw(`    ${status} ${log.colors.cyan(plugin.manifest.name)} v${plugin.version}`);
+          log.raw(`      ${log.colors.dim(plugin.manifest.description)}`);
+        });
+      }
+      
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (cmd === "/suggestions") {
+      const suggestions = await smartSuggestionEngine.getSmartSuggestions("", {
+        repoPath: repo,
+        provider: sessionState.provider,
+        model: sessionState.model,
+        projectInfo: sessionState.projectInfo,
+        currentBranch: branchName
+      });
+      
+      const suggestionStats = smartSuggestionEngine.getSuggestionStats();
+      
+      log.raw("");
+      log.raw(log.colors.bright("💡 Smart Suggestions:"));
+      log.raw(`  ${log.colors.dim("Total Patterns:")} ${log.colors.cyan(suggestionStats.learnedPatterns.toString())}`);
+      log.raw(`  ${log.colors.dim("Accuracy:")} ${log.colors.green((suggestionStats.accuracy * 100).toFixed(1) + '%')}`);
+      
+      if (suggestions.length > 0) {
+        log.raw(`  ${log.colors.dim("Current Suggestions:")}`);
+        suggestions.slice(0, 5).forEach((suggestion, i) => {
+          const priority = suggestion.priority === 'high' ? log.colors.red('HIGH') : 
+                          suggestion.priority === 'medium' ? log.colors.yellow('MED') : log.colors.green('LOW');
+          log.raw(`    ${i + 1}. ${priority} ${suggestion.title} (${Math.round(suggestion.confidence * 100)}%)`);
+          log.raw(`       ${log.colors.dim(suggestion.description)}`);
+        });
+      }
+      
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+
     // Help command
     if (cmd === "help") {
       terminal.showHelp();
@@ -715,8 +889,54 @@ const launchUI = Boolean((argv as any).ui);
       return;
     }
 
-    // Default: treat as coding task
-    await runTask(repo, input, dry, sessionState.model, branchName, sessionState.provider);
+    // Default: treat as coding task with enhanced error handling
+    try {
+      // Monitor task performance
+      const taskResult = await performanceMonitor.monitorAICall(
+        sessionState.provider,
+        sessionState.model,
+        () => runTask(repo, input, dry, sessionState.model, branchName, sessionState.provider),
+        {
+          task: input,
+          repoPath: repo,
+          branch: branchName
+        }
+      );
+      
+      // Learn from command usage
+      smartSuggestionEngine.learnFromCommand(input, {
+        projectType: sessionState.projectInfo.type,
+        provider: sessionState.provider,
+        framework: sessionState.projectInfo.framework
+      }, true);
+      
+    } catch (error) {
+      // Enhanced error recovery
+      const errorContext = {
+        error: error instanceof Error ? error.message : String(error),
+        repoPath: repo,
+        provider: sessionState.provider,
+        model: sessionState.model,
+        timestamp: Date.now(),
+        projectType: sessionState.projectInfo.type,
+        framework: sessionState.projectInfo.framework
+      };
+      
+      log.error("Task execution failed:", error);
+      
+      // Attempt intelligent recovery
+      const recoveryPlan = await intelligentErrorRecovery.analyzeAndRecover(errorContext);
+      
+      if (recoveryPlan.success && recoveryPlan.actions.length > 0) {
+        log.info("🧠 Intelligent recovery suggestions available:");
+        recoveryPlan.actions.slice(0, 3).forEach((action, i) => {
+          log.raw(`  ${i + 1}. ${log.colors.cyan(action.title)} (${Math.round(action.confidence * 100)}% confidence)`);
+          log.raw(`     ${log.colors.dim(action.description)}`);
+        });
+        log.raw("");
+        log.info("Use '/recover' to execute recovery suggestions");
+      }
+    }
     rl.prompt();
   });
 

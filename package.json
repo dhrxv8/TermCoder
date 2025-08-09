@@ -1,9 +1,9 @@
 {
   "name": "termcode",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
-  "description": "Enhanced universal terminal coding agent with advanced security, workspace management, and multi-provider AI support - Claude Code alternative",
-  "keywords": ["ai", "coding", "terminal", "chatgpt", "openai", "claude-code", "anthropic", "xai", "google", "mistral", "cohere", "ollama"],
+  "description": "Superior terminal AI coding agent with enterprise-grade security, intelligent error recovery, performance monitoring, and plugin system - Advanced Claude Code alternative",
+  "keywords": ["ai", "coding", "terminal", "chatgpt", "openai", "claude-code", "anthropic", "xai", "google", "mistral", "cohere", "ollama", "performance-monitoring", "security-sandbox", "plugin-system", "error-recovery", "smart-suggestions"],
   "author": "dhrxv8",
   "license": "MIT",
   "homepage": "https://github.com/dhrxv8/TermCoder#readme",
