@@ -18,6 +18,11 @@ import { loadSession, createSession, updateSession, listRecentSessions } from ".
 import { formatBudgetStatus } from "./util/costs.js";
 import { getIndexStats } from "./retriever/indexer.js";
 import { getProvider, registry } from "./providers/index.js";
+import { terminal } from "./ui/terminal.js";
+import { workspaceManager } from "./workspace/manager.js";
+import { mcpClient } from "./mcp/client.js";
+import { PipelineProcessor } from "./tools/pipe.js";
+import { sandbox } from "./security/sandbox.js";
 
 const argv = yargs(hideBin(process.argv))
   .scriptName("termcode")
@@ -156,17 +161,23 @@ const launchUI = Boolean((argv as any).ui);
     log.step("Loaded session", `${session.recentTasks.length} recent tasks`);
   }
   
+  // Initialize workspace manager
+  await workspaceManager.initialize();
+  
   // Show project info
   const projectInfo = await detectProjectType(repo);
   const indexStats = await getIndexStats(repo);
   
-  log.success("Ready! Type your request or 'help' for commands");
+  // Load workspace
+  const workspace = await workspaceManager.loadWorkspace(repo, projectInfo);
   
-  if (projectInfo.hasTests) {
-    log.raw(`  ${log.colors.dim("Project:")} ${log.colors.cyan(projectInfo.type)} with ${log.colors.green(projectInfo.testFiles.length.toString())} test files`);
-  } else {
-    log.raw(`  ${log.colors.dim("Project:")} ${log.colors.cyan(projectInfo.type)} (no tests detected)`);
-  }
+  // Show enhanced welcome screen
+  terminal.setTheme(workspace.preferences.theme);
+  terminal.showWelcome(projectInfo, { 
+    provider: currentProvider, 
+    model: currentModel, 
+    branchName 
+  });
   
   if (indexStats) {
     log.raw(`  ${log.colors.dim("Index:")} ${log.colors.green(indexStats.chunkCount.toString())} chunks from ${log.colors.green(indexStats.fileCount.toString())} files`);
@@ -211,7 +222,7 @@ const launchUI = Boolean((argv as any).ui);
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: log.colors.dim("termcode") + log.colors.blue(" > "),
+    prompt: terminal.getPrompt(),
     historySize: 100,
   });
 
@@ -286,25 +297,14 @@ const launchUI = Boolean((argv as any).ui);
     }
     
     if (cmd === "/keys") {
-      log.raw("");
-      log.raw(log.colors.bright("🔐 API Key Status:"));
       const providerKeys = await listProviderKeys();
       const availableProviders = Object.keys(registry);
+      const providers = availableProviders.map(id => ({
+        id,
+        hasKey: id === "ollama" || providerKeys.includes(id)
+      }));
       
-      for (const providerId of availableProviders) {
-        const providerName = log.colors.cyan(providerId.padEnd(12));
-        if (providerId === "ollama") {
-          log.raw(`  ${providerName} ${log.colors.green("✓")} ${log.colors.dim("local (no key needed)")}`);
-        } else {
-          const hasKey = providerKeys.includes(providerId);
-          const status = hasKey ? 
-            `${log.colors.green("✓")} ${log.colors.dim("configured")}` : 
-            `${log.colors.red("❌")} ${log.colors.dim("missing")}`;
-          log.raw(`  ${providerName} ${status}`);
-        }
-      }
-      log.raw("");
-      log.raw(log.colors.dim("Use /provider <name> to add missing keys"));
+      terminal.showProviderStatus(providers);
       rl.prompt();
       return;
     }
@@ -648,45 +648,69 @@ const launchUI = Boolean((argv as any).ui);
 
     // Help command
     if (cmd === "help") {
-      log.raw("");
-      log.raw(log.colors.bright("📚 TermCode Commands:"));
-      log.raw("");
+      terminal.showHelp();
+      rl.prompt();
+      return;
+    }
+
+    // Check for pipe commands
+    if (PipelineProcessor.hasPipes(input)) {
+      log.step("Executing", "pipe command");
+      const processor = new PipelineProcessor(repo);
+      const result = await processor.execute(input);
       
-      log.raw(log.colors.cyan("  General:"));
-      log.raw(`    ${log.colors.magenta("<task>")}           ${log.colors.dim("- Execute a coding task")}`);
-      log.raw(`    ${log.colors.magenta("help")}            ${log.colors.dim("- Show this help")}`);
-      log.raw(`    ${log.colors.magenta("exit/quit")}       ${log.colors.dim("- Exit session")}`);
-      log.raw("");
+      if (result.ok) {
+        if (result.data) {
+          log.raw(result.data);
+        }
+        log.success("Pipe command completed");
+      } else {
+        terminal.showError(result.error || "Pipe execution failed");
+      }
+      rl.prompt();
+      return;
+    }
+    
+    // Check for theme command
+    if (input.startsWith("/theme ")) {
+      const themeName = input.slice(7).trim();
+      terminal.setTheme(themeName);
+      rl.setPrompt(terminal.getPrompt());
+      log.success(`Theme changed to: ${themeName}`);
       
-      log.raw(log.colors.cyan("  Configuration:"));
-      log.raw(`    ${log.colors.magenta("/provider <id>")}   ${log.colors.dim("- Switch provider")} ${log.colors.dim("(" + Object.keys(registry).join(", ") + ")")}`);
-      log.raw(`    ${log.colors.magenta("/model <id>")}      ${log.colors.dim("- Switch model")}`);
-      log.raw(`    ${log.colors.magenta("/keys")}           ${log.colors.dim("- Show API key status")}`);
-      log.raw(`    ${log.colors.magenta("/health")}         ${log.colors.dim("- Check provider health and connectivity")}`);
-      log.raw(`    ${log.colors.magenta("/whoami")}         ${log.colors.dim("- Show current session info")}`);
-      log.raw(`    ${log.colors.magenta("/budget")}         ${log.colors.dim("- Show budget and usage status")}`);
-      log.raw(`    ${log.colors.magenta("/sessions")}       ${log.colors.dim("- Show recent sessions")}`);
-      log.raw(`    ${log.colors.magenta("/config")}         ${log.colors.dim("- Configuration management commands")}`);
-      log.raw("");
-      
-      log.raw(log.colors.cyan("  Git Workflow:"));
-      log.raw(`    ${log.colors.magenta("rollback")}        ${log.colors.dim("- Discard all changes and return to main")}`);
-      log.raw(`    ${log.colors.magenta("merge")}           ${log.colors.dim("- Merge changes to main")}`);
-      log.raw(`    ${log.colors.magenta('pr "title"')}      ${log.colors.dim("- Create GitHub PR")}`);
-      log.raw("");
-      
-      log.raw(log.colors.cyan("  Development:"));
-      log.raw(`    ${log.colors.magenta("test")}            ${log.colors.dim("- Run tests")}`);
-      log.raw(`    ${log.colors.magenta("lint")}            ${log.colors.dim("- Run linter")}`);
-      log.raw(`    ${log.colors.magenta("build")}           ${log.colors.dim("- Run build")}`);
-      log.raw(`    ${log.colors.magenta("!<cmd>")}          ${log.colors.dim("- Execute shell command")}`);
-      log.raw("");
-      
-      log.raw(log.colors.cyan("  Logging:"));
-      log.raw(`    ${log.colors.magenta("log")}             ${log.colors.dim("- Show session history")}`);
-      log.raw(`    ${log.colors.magenta("clear-log")}       ${log.colors.dim("- Clear all logs")}`);
-      log.raw("");
-      
+      // Update workspace preferences
+      await workspaceManager.updateWorkspacePreferences(repo, { theme: themeName });
+      rl.prompt();
+      return;
+    }
+    
+    // Check for workspace commands
+    if (cmd === "/workspace") {
+      const workspace = workspaceManager.getCurrentWorkspace();
+      if (workspace) {
+        log.raw("");
+        log.raw(log.colors.bright("📁 Current Workspace"));
+        log.raw(`  ${log.colors.dim("Name:")} ${log.colors.cyan(workspace.name)}`);
+        log.raw(`  ${log.colors.dim("Type:")} ${log.colors.magenta(workspace.type)}`);
+        if (workspace.framework) {
+          log.raw(`  ${log.colors.dim("Framework:")} ${log.colors.yellow(workspace.framework)}`);
+        }
+        log.raw(`  ${log.colors.dim("Path:")} ${log.colors.dim(workspace.path)}`);
+        log.raw(`  ${log.colors.dim("Last Used:")} ${log.colors.dim(new Date(workspace.lastUsed).toLocaleString())}`);
+        
+        if (workspace.bookmarks.length > 0) {
+          log.raw(`  ${log.colors.dim("Bookmarks:")} ${workspace.bookmarks.map(b => log.colors.blue(b)).join(", ")}`);
+        }
+        log.raw("");
+      }
+      rl.prompt();
+      return;
+    }
+    
+    if (input.startsWith("/bookmark ")) {
+      const bookmark = input.slice(10).trim();
+      await workspaceManager.addBookmark(repo, bookmark);
+      log.success(`Bookmark added: ${bookmark}`);
       rl.prompt();
       return;
     }

@@ -78,19 +78,39 @@ function validateCommand(cmd: string[]): { valid: boolean; error?: string } {
   return { valid: true };
 }
 
-export async function runShell(cmd: string[], cwd: string): Promise<ToolResult<{ code: number; stdout: string; stderr: string }>> {
-  // Validate command safety
-  const validation = validateCommand(cmd);
-  if (!validation.valid) {
-    return { ok: false, error: validation.error! };
+export async function runShell(cmd: string[], cwd: string, stdin?: string): Promise<ToolResult<{ code: number; stdout: string; stderr: string }>> {
+  // Use enhanced security sandbox for validation and execution
+  try {
+    // Import sandbox here to avoid circular dependencies
+    const { sandbox } = await import("../security/sandbox.js");
+    const result = await sandbox.execute(cmd, cwd, stdin);
+    
+    if (result.ok) {
+      return { ok: true, data: result.data! };
+    } else if (result.blocked) {
+      return { ok: false, error: `Security: ${result.blocked}` };
+    } else {
+      return { ok: false, error: result.error || "Shell execution failed" };
+    }
+  } catch (error) {
+    // Fallback to legacy validation if sandbox fails
+    const validation = validateCommand(cmd);
+    if (!validation.valid) {
+      return { ok: false, error: validation.error! };
+    }
+    
+    // Ensure working directory is safe (no directory traversal)
+    const resolvedCwd = path.resolve(cwd);
+    if (!resolvedCwd.startsWith(path.resolve(process.cwd()))) {
+      return { ok: false, error: "Working directory outside project bounds" };
+    }
+    
+    // Fallback to legacy execution
+    return legacyExecute(cmd, resolvedCwd, stdin);
   }
-  
-  // Ensure working directory is safe (no directory traversal)
-  const resolvedCwd = path.resolve(cwd);
-  if (!resolvedCwd.startsWith(path.resolve(process.cwd()))) {
-    return { ok: false, error: "Working directory outside project bounds" };
-  }
-  
+}
+
+function legacyExecute(cmd: string[], resolvedCwd: string, stdin?: string): Promise<ToolResult<{ code: number; stdout: string; stderr: string }>> {
   return new Promise((resolve) => {
     const bin = cmd[0];
     const args = cmd.slice(1);
@@ -99,7 +119,7 @@ export async function runShell(cmd: string[], cwd: string): Promise<ToolResult<{
     const child = spawn(bin, args, { 
       cwd: resolvedCwd, 
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"], // No stdin to prevent interactive prompts
+      stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"], // Enable stdin if provided
       env: {
         ...process.env,
         // Remove potentially dangerous environment variables
@@ -164,5 +184,11 @@ export async function runShell(cmd: string[], cwd: string): Promise<ToolResult<{
         });
       }
     });
+    
+    // Send stdin if provided
+    if (stdin && child.stdin) {
+      child.stdin.write(stdin);
+      child.stdin.end();
+    }
   });
 }

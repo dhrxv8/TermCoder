@@ -1,8 +1,8 @@
 {
   "name": "termcode",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "type": "module",
-  "description": "Universal terminal coding agent with multi-provider AI support - Claude Code alternative",
+  "description": "Enhanced universal terminal coding agent with advanced security, workspace management, and multi-provider AI support - Claude Code alternative",
   "keywords": ["ai", "coding", "terminal", "chatgpt", "openai", "claude-code", "anthropic", "xai", "google", "mistral", "cohere", "ollama"],
   "author": "dhrxv8",
   "license": "MIT",

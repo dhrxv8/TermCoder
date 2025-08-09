@@ -17,12 +17,16 @@ export interface TestResult {
 
 export interface ProjectInfo {
   type: "javascript" | "typescript" | "python" | "go" | "rust" | "java" | "other";
+  framework?: string;
   testRunner?: string;
   buildTool?: string;
   linter?: string;
   hasTests: boolean;
   testFiles: string[];
   configFiles: string[];
+  dependencies: string[];
+  devDependencies: string[];
+  contexts: string[];
 }
 
 export async function detectProjectType(repo: string): Promise<ProjectInfo> {
@@ -30,7 +34,10 @@ export async function detectProjectType(repo: string): Promise<ProjectInfo> {
     type: "other",
     hasTests: false,
     testFiles: [],
-    configFiles: []
+    configFiles: [],
+    dependencies: [],
+    devDependencies: [],
+    contexts: []
   };
 
   try {
@@ -43,6 +50,29 @@ export async function detectProjectType(repo: string): Promise<ProjectInfo> {
         const pkg = JSON.parse(pkgContent);
         
         info.type = pkg.devDependencies?.typescript ? "typescript" : "javascript";
+        
+        // Store dependencies
+        info.dependencies = Object.keys(pkg.dependencies || {});
+        info.devDependencies = Object.keys(pkg.devDependencies || {});
+        
+        // Detect framework
+        if (pkg.dependencies?.react || pkg.devDependencies?.react) {
+          info.framework = "react";
+        } else if (pkg.dependencies?.vue || pkg.devDependencies?.vue) {
+          info.framework = "vue";
+        } else if (pkg.dependencies?.angular || pkg.devDependencies?.angular) {
+          info.framework = "angular";
+        } else if (pkg.dependencies?.next || pkg.devDependencies?.next) {
+          info.framework = "next";
+        } else if (pkg.dependencies?.nuxt || pkg.devDependencies?.nuxt) {
+          info.framework = "nuxt";
+        } else if (pkg.dependencies?.svelte || pkg.devDependencies?.svelte) {
+          info.framework = "svelte";
+        } else if (pkg.dependencies?.express || pkg.devDependencies?.express) {
+          info.framework = "express";
+        } else if (pkg.dependencies?.fastify || pkg.devDependencies?.fastify) {
+          info.framework = "fastify";
+        }
         
         // Detect test runner
         if (pkg.devDependencies?.jest || pkg.dependencies?.jest) {
@@ -68,6 +98,10 @@ export async function detectProjectType(repo: string): Promise<ProjectInfo> {
         if (pkg.devDependencies?.eslint) {
           info.linter = "eslint";
         }
+        
+        // Add context information
+        info.contexts.push("Node.js ecosystem");
+        if (info.framework) info.contexts.push(`${info.framework} framework`);
         
       } catch (error) {
         // Invalid package.json

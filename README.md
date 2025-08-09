@@ -1,6 +1,6 @@
-# TermCoder — Universal Terminal Coding Agent
+# TermCoder — Enhanced Universal Terminal Coding Agent
 
-A feature-complete terminal coding agent that replicates Claude Code's functionality with support for **all major AI providers**. Universal alternative to Claude Code with identical workflow and commands, plus multi-provider support.
+A next-generation terminal coding agent with **advanced architecture** and support for **all major AI providers**. Features enhanced security, workspace management, and intelligent error handling.
 
 [![npm version](https://badge.fury.io/js/termcode.svg)](https://badge.fury.io/js/termcode)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -11,13 +11,16 @@ A feature-complete terminal coding agent that replicates Claude Code's functiona
 
 **👉 [Read the Full Usage Guide](./USAGE_GUIDE.md)** for detailed installation, setup, and usage instructions.
 
-## 📦 Latest Version: v0.2.2
+## 📦 Latest Version: v0.3.0 (Major Update)
 
-**Recent Fixes:**
-- ✅ Fixed embedding retrieval error (`TypeError: raw is not iterable`)
-- ✅ Improved AI model prompt system for better diff generation
-- ✅ Enhanced context handling for better responses
-- ✅ Published to npm as `termcode@0.2.2`
+**🚀 New Features:**
+- ✅ **Enhanced Security Sandbox** - Advanced command validation and execution safety
+- ✅ **Workspace Management** - Project-aware context and persistent settings
+- ✅ **Unix-Style Piping** - Composable command chaining for power users
+- ✅ **Model Context Protocol (MCP)** - External data source integration capability
+- ✅ **Intelligent Error Handling** - Smart error recovery with actionable suggestions
+- ✅ **Enhanced Terminal UX** - Improved themes, help system, and user experience
+- ✅ **Advanced Project Detection** - Better framework and toolchain recognition
 
 ## 🚀 Quick Start
 
@@ -70,6 +73,13 @@ termcode --repo .
 | **Safe shell access** | ✅ | `!command` for constrained shell execution |
 | **Budget tracking** | ✅ | Monitor costs across providers with spending limits |
 | **Health monitoring** | ✅ | Real-time provider status and connectivity checks |
+| **🆕 Security Sandbox** | ✅ | Advanced command validation with security policies |
+| **🆕 Workspace Management** | ✅ | Project-aware settings and context persistence |
+| **🆕 Unix Piping** | ✅ | Chain commands like `termcode "task" \| grep "error"` |
+| **🆕 MCP Integration** | ✅ | Model Context Protocol for external data sources |
+| **🆕 Smart Error Handling** | ✅ | Intelligent error recovery with suggestions |
+| **🆕 Enhanced Themes** | ✅ | Multiple terminal themes (claude, minimal, default) |
+| **🆕 Advanced Detection** | ✅ | Better framework recognition (React, Vue, Next.js, etc.) |
 
 ## 💡 Basic Usage Examples
 
@@ -104,6 +114,11 @@ termcode "Add error handling" --repo . --dry
 /health                # Check provider connectivity
 /whoami                # Current session info
 
+# 🆕 New Commands
+/theme <name>          # Switch terminal theme (claude, minimal, default)
+/workspace             # Show current workspace information
+/bookmark <item>       # Add bookmark to current workspace
+
 # Git Workflow  
 merge                  # Apply changes to main branch
 rollback               # Discard all changes
@@ -114,6 +129,10 @@ test                   # Run project tests
 lint                   # Run linter
 build                  # Run build
 !<command>             # Execute shell command safely
+
+# 🆕 Enhanced Commands with Piping Support
+termcode "task" | grep "error"    # Pipe task output to grep
+termcode "analyze" | head -10     # Show first 10 lines of analysis
 
 # Session Management
 log                    # Show session history
@@ -181,16 +200,32 @@ Keys are stored securely in your OS keychain during the setup wizard.
 
 ## 🆚 Why TermCoder?
 
-**Same Claude Code experience, but with:**
+**TermCoder offers:**
+
+### 🔒 **Enhanced Security Architecture**
+- **Advanced Sandbox** - Multi-layered command validation and execution safety
+- **Security Patterns** - Detection of dangerous operations and credential leaks
+- **Safe Execution** - Restricted environment with controlled command allowlists
+
+### 🏢 **Workspace Intelligence**
+- **Project-Aware Context** - Automatic framework and toolchain detection
+- **Persistent Settings** - Per-project preferences and configurations
+- **Smart Defaults** - Optimized provider/model selection based on project type
+
+### 🔧 **Developer Experience**
+- **Unix-Style Piping** - Composable command chaining for power users
+- **Intelligent Error Handling** - Smart error recovery with actionable suggestions
+- **Enhanced Themes** - Multiple terminal UI themes for different preferences
+
+### 🤖 **AI Provider Flexibility**
 - **Multi-provider support** - Choose from 7 AI providers
 - **Real-time switching** - Change providers mid-session
 - **Local AI support** - Ollama for complete privacy
 - **Cost optimization** - Use cheaper models for simple tasks
 - **Budget tracking** - Monitor spending across providers
 - **Health monitoring** - Real-time connectivity status
-- **Identical commands** - Same workflow as Claude Code
 
-Perfect for teams wanting Claude Code's proven workflow with the flexibility of multiple AI providers.
+Perfect for teams wanting a powerful terminal coding agent with advanced security, workspace management, and multi-provider flexibility.
 
 ## 📚 Full Documentation
 
