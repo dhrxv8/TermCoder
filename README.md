@@ -7,6 +7,25 @@ A feature-complete terminal coding agent that replicates Claude Code's functiona
 [![GitHub issues](https://img.shields.io/github/issues/dhrxv8/TermCoder)](https://github.com/dhrxv8/TermCoder/issues)
 [![GitHub stars](https://img.shields.io/github/stars/dhrxv8/TermCoder)](https://github.com/dhrxv8/TermCoder/stargazers)
 
+## 📖 Complete Usage Guide
+
+**👉 [Read the Full Usage Guide](./USAGE_GUIDE.md)** for detailed installation, setup, and usage instructions.
+
+## 🚀 Quick Start
+
+```bash
+# Install globally from npm
+npm install -g termcode
+
+# First run - launches onboarding wizard
+termcode --repo .
+
+# Choose providers (OpenAI, Anthropic, xAI, Google, Mistral, Cohere, Ollama)
+# Add API keys (stored securely in OS keychain)  
+# Configure tools and budget
+# Start coding!
+```
+
 ## 🤖 Supported Providers
 
 | Provider | Models | Embeddings | Status |
@@ -25,9 +44,9 @@ A feature-complete terminal coding agent that replicates Claude Code's functiona
 |---------|---------|-------------|
 | **Interactive REPL** | ✅ | Claude-style terminal session with persistent context |
 | **One-shot commands** | ✅ | Single task execution and exit |
+| **Multi-provider support** | ✅ | Switch between 7 AI providers in real-time |
 | **Semantic code search** | ✅ | Embeddings + retrieval for large codebases |
 | **Memory persistence** | ✅ | `TERMCODE.md` for project context and conventions |
-| **Multi-provider support** | ✅ | Switch between OpenAI, Anthropic, xAI, Google, Mistral, Cohere, Ollama |
 | **Onboarding wizard** | ✅ | First-run setup with provider selection and secure key storage |
 | **Real-time switching** | ✅ | `/provider` and `/model` commands in REPL |
 | **Multi-file diffs** | ✅ | Unified diff editing with 3-way merge fallback |
@@ -41,140 +60,91 @@ A feature-complete terminal coding agent that replicates Claude Code's functiona
 | **Build validation** | ✅ | `build` command runs project build |
 | **Session logging** | ✅ | Complete transcript of all changes with timestamps |
 | **Safe shell access** | ✅ | `!command` for constrained shell execution |
-| **Model selection** | ✅ | `--model` flag for gpt-4o/gpt-4o-mini/etc. |
+| **Budget tracking** | ✅ | Monitor costs across providers with spending limits |
+| **Health monitoring** | ✅ | Real-time provider status and connectivity checks |
 
-## 🚀 Quick Start
+## 💡 Basic Usage Examples
 
+### Interactive Session
 ```bash
-# Install globally from npm
-npm install -g termcoder
-
-# First run - launches onboarding wizard
-termcoder --repo ~/your-project
-
-# Choose providers (OpenAI, Anthropic, xAI, Google, Mistral, Cohere, Ollama)
-# Add API keys (stored securely in OS keychain)  
-# Configure tools and budget
-# Start coding!
-```
-
-**That's it!** No manual configuration files or environment variables needed.
-
-## 🚀 Development Installation
-
-```bash
-# Clone and build from source
-git clone https://github.com/dhrxv8/TermCoder.git
-cd TermCoder
-npm install
-npm run build
-npm link  # Makes 'termcoder' available globally
-
-# No .env file needed - onboarding wizard handles everything
-```
-
-## 💡 Usage
-
-### Interactive Session (Claude Code style)
-```bash
-termcoder --repo /path/to/your/project
-[info] Using openai (gpt-4o-mini)
-[info] Loading repo: /path/to/your/project
-[info] Working on branch: termcode-1754624890
-[info] Index ready. Memory loaded.
-
+termcode --repo /path/to/your/project
 [termcoder] > Add user authentication with JWT
-[info] Applied: src/auth.ts, middleware/auth.js
-[info] Changes committed
-
 [termcoder] > /provider anthropic
-[info] Provider → anthropic (claude-3-5-sonnet-20241022)
-
 [termcoder] > Optimize the JWT validation logic
-[info] Applied: middleware/auth.js
-[info] Changes committed
-
 [termcoder] > test
-[info] ✅ Tests passed
-
 [termcoder] > pr "Add JWT authentication system"
-[info] ✅ Created PR: https://github.com/user/repo/pull/42
-
-[termcoder] > rollback  # or 'merge' to keep changes
-[info] Rollback complete. Switched back to main.
 ```
 
 ### One-shot Commands
 ```bash
 # Quick single task
-termcoder "Migrate to TypeScript" --repo . --model gpt-4o
+termcode "Migrate to TypeScript" --repo . --model gpt-4o
 
 # Use different provider
-termcoder "Add dark mode toggle" --repo . --provider anthropic
+termcode "Add dark mode toggle" --repo . --provider anthropic
 
 # Dry run to preview changes
-termcoder "Add error handling" --repo . --dry
+termcode "Add error handling" --repo . --dry
 ```
 
-### Available REPL Commands
+### Key Commands
 ```bash
-# Coding Tasks
-<task description>     # Execute any coding task
-help                   # Show command reference
-
-# Provider & Model Management
-/provider <name>       # Switch provider (openai, anthropic, xai, google, mistral, cohere, ollama)
-/model <model-id>      # Switch model (gpt-4o, claude-3-5-sonnet, grok-beta, etc.)
-/keys                  # Show API key status for all providers
-/whoami                # Show current provider, model, and session info
+# Provider Management
+/provider <name>       # Switch between OpenAI, Anthropic, xAI, Google, Mistral, Cohere, Ollama
+/model <model-id>      # Change model (gpt-4o, claude-3-5-sonnet, grok-beta, etc.)
+/keys                  # Show API key status
+/health                # Check provider connectivity
+/whoami                # Current session info
 
 # Git Workflow  
-rollback              # Discard all changes, return to main
-merge                 # Merge changes to main branch
-pr "title"            # Create GitHub pull request
+merge                  # Apply changes to main branch
+rollback               # Discard all changes
+pr "title"             # Create GitHub pull request
 
-# Development
-test                  # Run project tests
-lint                  # Run linter
-build                 # Run build
-!<command>            # Execute shell command safely
+# Development Tools
+test                   # Run project tests
+lint                   # Run linter
+build                  # Run build
+!<command>             # Execute shell command safely
 
 # Session Management
-log                   # Show session history
-clear-log             # Clear all session logs
-exit/quit             # End session
+log                    # Show session history
+/budget                # Usage and cost tracking
+/sessions              # Recent project sessions
 ```
 
-## 🔧 Configuration
+## 🔧 Installation Options
 
-### Environment Variables (.env)
+### Method 1: NPM (Recommended)
 ```bash
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-4o-mini                    # Default model
-EMBED_MODEL=text-embedding-3-small         # For semantic search
-GITHUB_TOKEN=your_github_token              # For PR creation
-SHELL_TIMEOUT_MS=300000                     # Shell command timeout
+npm install -g termcode
 ```
 
-### Memory File (TERMCODE.md)
-Auto-created in your repo root. Edit to provide context:
-
-```markdown
-# TermCode Memory
-
-## Project Goals  
-- Build a React dashboard with TypeScript
-- Focus on performance and accessibility
-
-## Style & Conventions
-- Use functional components with hooks
-- ESLint + Prettier configuration
-- Test with Jest and React Testing Library
-
-## Domain Knowledge
-- Users have roles: admin, manager, viewer
-- API follows REST conventions with JWT auth
+### Method 2: From Source
+```bash
+git clone https://github.com/dhrxv8/TermCoder.git
+cd TermCoder
+npm install
+npm run build
+npm link
 ```
+
+### Method 3: Download Binary
+Download from [GitHub Releases](https://github.com/dhrxv8/TermCoder/releases)
+
+## ⚙️ API Keys Setup
+
+Get API keys from these providers:
+
+- **OpenAI**: [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+- **Anthropic**: [console.anthropic.com/account/keys](https://console.anthropic.com/account/keys)  
+- **xAI**: [console.x.ai/team/api-keys](https://console.x.ai/team/api-keys)
+- **Google**: [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+- **Mistral**: [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys/)
+- **Cohere**: [dashboard.cohere.com/api-keys](https://dashboard.cohere.com/api-keys)
+- **Ollama**: No API key needed - runs locally
+
+Keys are stored securely in your OS keychain during the setup wizard.
 
 ## 🛡️ Safety Features
 
@@ -184,12 +154,13 @@ Auto-created in your repo root. Edit to provide context:
 - **3-way merge**: Handles conflicting patches gracefully
 - **Constrained shell**: Only allows safe commands (npm, git, test runners)
 - **Session logging**: Complete audit trail of all changes
+- **Budget limits**: Spending controls across all providers
 
 ## 🔄 Workflow Comparison
 
 | Action | Claude Code | TermCoder |
 |--------|-------------|-----------|
-| Start session | `claude --repo .` | `termcoder --repo .` |
+| Start session | `claude --repo .` | `termcode --repo .` |
 | Make changes | `> add auth` | `> add auth` |
 | Switch provider | ❌ | `> /provider anthropic` |
 | Switch model | ❌ | `> /model gpt-4o` |
@@ -200,70 +171,43 @@ Auto-created in your repo root. Edit to provide context:
 
 **Identical workflow, but with multi-provider flexibility!**
 
-## ⚙️ Configuration
-
-TermCoder stores configuration in `~/.termcoder/config.json` and API keys securely in your OS keychain.
-
-### API Keys Setup
-
-Get API keys from these providers:
-- **OpenAI**: https://platform.openai.com/api-keys
-- **Anthropic**: https://console.anthropic.com/account/keys  
-- **xAI**: https://console.x.ai/team/api-keys
-- **Google**: https://aistudio.google.com/app/apikey
-- **Mistral**: https://console.mistral.ai/api-keys/
-- **Cohere**: https://dashboard.cohere.com/api-keys
-- **Ollama**: No API key needed - runs locally
-
-### Configuration Management
-```bash
-# View current configuration
-termcoder /whoami
-
-# Check API key status  
-termcoder /keys
-
-# Add/update API keys interactively
-termcoder /provider <provider-name>
-
-# Edit config file directly
-open ~/.termcoder/config.json
-```
-
-## 🎛️ Advanced Usage
-
-### Custom Models
-```bash
-termcode --model gpt-4o --repo .           # Use GPT-4o 
-termcode --model gpt-4o-mini --repo .      # Use GPT-4o Mini (faster/cheaper)
-```
-
-### Session Transcripts
-All changes are logged to `.termcode-logs/` with full context:
-```
-TIMESTAMP: 2025-01-08T10:30:00.000Z
-BRANCH: termcode-1754624890
-MODEL: gpt-4o-mini
-TASK: Add user authentication
-APPLIED: src/auth.ts, middleware/auth.js
-```
-
-### GitHub Integration
-Set `GITHUB_TOKEN` to enable:
-- `pr "title"` creates pull requests
-- Auto-generates PR body from session history
-- Links back to TermCode for attribution
-
-## 🆚 Why TermCode?
+## 🆚 Why TermCoder?
 
 **Same Claude Code experience, but with:**
-- ChatGPT models (GPT-4o, GPT-4o-mini) 
-- Potentially lower costs
-- OpenAI API ecosystem compatibility
-- Identical commands and workflow
+- **Multi-provider support** - Choose from 7 AI providers
+- **Real-time switching** - Change providers mid-session
+- **Local AI support** - Ollama for complete privacy
+- **Cost optimization** - Use cheaper models for simple tasks
+- **Budget tracking** - Monitor spending across providers
+- **Health monitoring** - Real-time connectivity status
+- **Identical commands** - Same workflow as Claude Code
 
-Perfect for teams already using OpenAI APIs or preferring ChatGPT models while keeping the proven Claude Code UX.
+Perfect for teams wanting Claude Code's proven workflow with the flexibility of multiple AI providers.
+
+## 📚 Full Documentation
+
+**For complete installation, setup, configuration, and usage instructions:**
+
+**👉 [Read the Full Usage Guide](./USAGE_GUIDE.md)**
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Inspired by Claude Code's excellent developer experience
+- Built to provide multi-provider flexibility while maintaining workflow familiarity
+- Thanks to all the AI providers for their APIs and model access
 
 ---
 
-**TermCode — Built with ❤️ as a Claude Code alternative**
+**TermCoder — Built with ❤️ as a Claude Code alternative**
