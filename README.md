@@ -2,7 +2,7 @@
 
 A feature-complete terminal coding agent that replicates Claude Code's functionality with support for **all major AI providers**. Universal alternative to Claude Code with identical workflow and commands, plus multi-provider support.
 
-[![npm version](https://badge.fury.io/js/termcoder.svg)](https://badge.fury.io/js/termcoder)
+[![npm version](https://badge.fury.io/js/termcode.svg)](https://badge.fury.io/js/termcode)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub issues](https://img.shields.io/github/issues/dhrxv8/TermCoder)](https://github.com/dhrxv8/TermCoder/issues)
 [![GitHub stars](https://img.shields.io/github/stars/dhrxv8/TermCoder)](https://github.com/dhrxv8/TermCoder/stargazers)
@@ -10,6 +10,14 @@ A feature-complete terminal coding agent that replicates Claude Code's functiona
 ## 📖 Complete Usage Guide
 
 **👉 [Read the Full Usage Guide](./USAGE_GUIDE.md)** for detailed installation, setup, and usage instructions.
+
+## 📦 Latest Version: v0.2.2
+
+**Recent Fixes:**
+- ✅ Fixed embedding retrieval error (`TypeError: raw is not iterable`)
+- ✅ Improved AI model prompt system for better diff generation
+- ✅ Enhanced context handling for better responses
+- ✅ Published to npm as `termcode@0.2.2`
 
 ## 🚀 Quick Start
 

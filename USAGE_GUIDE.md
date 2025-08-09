@@ -18,10 +18,12 @@
 
 **Install and run in 3 commands:**
 ```bash
-npm install -g termcode
+npm install -g termcode@0.2.2
 termcode --repo /path/to/your/project
 # Follow the setup wizard, then start coding with AI!
 ```
+
+> **Latest Version**: v0.2.2 - Includes fixes for embedding retrieval errors and improved AI response generation.
 
 ---
 
@@ -29,7 +31,7 @@ termcode --repo /path/to/your/project
 
 ### Method 1: NPM (Recommended)
 ```bash
-npm install -g termcode
+npm install -g termcode@0.2.2
 ```
 
 ### Method 2: From Source
