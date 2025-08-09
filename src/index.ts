@@ -160,6 +160,16 @@ const launchUI = Boolean((argv as any).ui);
   const projectInfo = await detectProjectType(repo);
   const indexStats = await getIndexStats(repo);
   
+  // Initialize macro system
+  const { initializeMacros } = await import("./macros/index.js");
+  await initializeMacros();
+  
+  // Initialize GitHub integration if enabled
+  if (process.env.GITHUB_WEBHOOK_ENABLED === 'true') {
+    const { initializeGitHubIntegration } = await import("./github/index.js");
+    await initializeGitHubIntegration();
+  }
+
   log.success("Ready! Type your request or 'help' for commands");
   
   if (projectInfo.hasTests) {
@@ -219,7 +229,8 @@ const launchUI = Boolean((argv as any).ui);
 
   rl.on("line", async (line) => {
     const input = line.trim();
-    const cmd = input.toLowerCase();
+    const args = input.split(/\s+/);
+    const cmd = args[0]?.toLowerCase() || "";
 
     if (!input) {
       rl.prompt();
@@ -520,10 +531,22 @@ const launchUI = Boolean((argv as any).ui);
 
     // Test commands
     if (cmd === "test") {
-      const { runTests } = await import("./tools/test.js");
-      const result = await runTests(repo);
+      const autoDebugFlag = args[1] === "--auto-debug" || args[1] === "-a";
       
-      if (result.success) {
+      if (autoDebugFlag) {
+        const { runTestsWithAutoDebug } = await import("./agent/auto-debugger.js");
+        const result = await runTestsWithAutoDebug(repo, true);
+        
+        if (result.success) {
+          log.success(`🎉 Tests passed with auto-debug${(result as any).autoDebugAttempts > 1 ? ` (${(result as any).autoDebugAttempts} attempts)` : ""}`);
+        } else {
+          log.error(`❌ Auto-debug failed after ${(result as any).autoDebugAttempts || 1} attempts`);
+        }
+      } else {
+        const { runTests } = await import("./tools/test.js");
+        const result = await runTests(repo);
+        
+        if (result.success) {
         let message = `Tests passed with ${result.runner}`;
         if (result.testsRun) {
           message += ` (${result.testsRun} tests`;
@@ -537,6 +560,26 @@ const launchUI = Boolean((argv as any).ui);
         log.success(message);
       } else {
         log.error(`Tests failed: ${result.output.split('\n')[0]}`);
+        
+        // Show failure analysis if available
+        if (result.failureAnalysis) {
+          log.raw("");
+          log.raw(log.colors.bright("🔍 Failure Analysis:"));
+          log.raw(result.failureAnalysis);
+        }
+        
+        // Show failing test names
+        if (result.failingTests && result.failingTests.length > 0) {
+          log.raw("");
+          log.raw(log.colors.bright("❌ Failing Tests:"));
+          for (const test of result.failingTests.slice(0, 5)) { // Show max 5
+            log.raw(`  • ${log.colors.red(test)}`);
+          }
+          if (result.failingTests.length > 5) {
+            log.raw(`  ... and ${result.failingTests.length - 5} more`);
+          }
+        }
+        }
       }
       rl.prompt();
       return;
@@ -646,6 +689,710 @@ const launchUI = Boolean((argv as any).ui);
       return;
     }
 
+    // Tools commands
+    if (cmd === "/tools") {
+      log.raw("");
+      log.raw(log.colors.bright("🛠️  Tool Status:"));
+      log.raw("");
+      
+      const toolsStatus = [
+        { name: "shell", enabled: sessionState.config.tools.shell, description: "Execute shell commands" },
+        { name: "git", enabled: sessionState.config.tools.git, description: "Git operations and branch management" },
+        { name: "tests", enabled: sessionState.config.tools.tests, description: "Run tests automatically" },
+        { name: "browser", enabled: sessionState.config.tools.browser, description: "Web browsing capabilities" }
+      ];
+      
+      for (const tool of toolsStatus) {
+        const status = tool.enabled ? log.colors.green("✓ ON ") : log.colors.red("✗ OFF");
+        const name = log.colors.cyan(tool.name.padEnd(8));
+        const desc = log.colors.dim(tool.description);
+        log.raw(`  ${status} ${name} ${desc}`);
+      }
+      
+      log.raw("");
+      log.raw(log.colors.dim("Usage: /tools <name> on|off"));
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (input.startsWith("/tools ")) {
+      const parts = input.split(" ");
+      if (parts.length !== 3) {
+        log.error("Usage: /tools <name> on|off");
+        log.raw("Available tools: shell, git, tests, browser");
+        rl.prompt();
+        return;
+      }
+      
+      const [, toolName, action] = parts;
+      const validTools = ["shell", "git", "tests", "browser"];
+      const validActions = ["on", "off"];
+      
+      if (!validTools.includes(toolName)) {
+        log.error(`Unknown tool: ${toolName}`);
+        log.raw("Available tools: " + validTools.join(", "));
+        rl.prompt();
+        return;
+      }
+      
+      if (!validActions.includes(action)) {
+        log.error("Action must be 'on' or 'off'");
+        rl.prompt();
+        return;
+      }
+      
+      const enabled = action === "on";
+      const oldValue = sessionState.config.tools[toolName as keyof typeof sessionState.config.tools];
+      
+      // Update config
+      (sessionState.config.tools as any)[toolName] = 
+        toolName === "tests" ? (enabled ? "auto" : false) : enabled;
+      
+      // Save updated config
+      try {
+        const { saveConfig } = await import("./state/config.js");
+        await saveConfig(sessionState.config);
+        
+        const statusText = enabled ? log.colors.green("enabled") : log.colors.red("disabled");
+        log.success(`Tool '${log.colors.cyan(toolName)}' ${statusText}`);
+        
+        if (toolName === "shell" && enabled) {
+          log.warn("Shell commands (!cmd) are now enabled - use with caution");
+        } else if (toolName === "browser" && enabled) {
+          log.warn("Browser tools are experimental - may require additional setup");
+        }
+      } catch (error) {
+        log.error("Failed to save config:", error);
+        // Revert the change
+        (sessionState.config.tools as any)[toolName] = oldValue;
+      }
+      
+      rl.prompt();
+      return;
+    }
+
+    // Hunks command
+    if (cmd === "/hunks") {
+      const currentStatus = process.env.TERMCODE_INTERACTIVE_HUNKS === 'true';
+      const statusText = currentStatus ? log.colors.green("enabled") : log.colors.red("disabled");
+      
+      log.raw("");
+      log.raw(log.colors.bright("🔍 Interactive Hunk Approval:"));
+      log.raw(`  Status: ${statusText}`);
+      log.raw("");
+      
+      if (currentStatus) {
+        log.raw("  When enabled, you can review and approve/reject individual hunks");
+        log.raw("  before they are applied to your codebase.");
+        log.raw("");
+        log.raw("  Commands during review:");
+        log.raw("  • s: Select/deselect current hunk");
+        log.raw("  • n/p: Navigate next/previous");
+        log.raw("  • a: Toggle all hunks");
+        log.raw("  • q: Apply selected hunks");
+      } else {
+        log.raw("  All diff hunks are applied automatically without review.");
+      }
+      
+      log.raw("");
+      log.raw(log.colors.dim("Toggle with: TERMCODE_INTERACTIVE_HUNKS=true termcode"));
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+
+    // Memory commands
+    if (cmd === "/memory") {
+      log.raw("");
+      log.raw(log.colors.bright("🧠 Shared Memory Commands:"));
+      log.raw("");
+      log.raw(`  ${log.colors.cyan("/memory add")}      ${log.colors.dim("- Add knowledge entry")}`);
+      log.raw(`  ${log.colors.cyan("/memory list")}     ${log.colors.dim("- List all entries")}`);
+      log.raw(`  ${log.colors.cyan("/memory search")}   ${log.colors.dim("- Search entries")}`);
+      log.raw(`  ${log.colors.cyan("/memory stats")}    ${log.colors.dim("- Show memory statistics")}`);
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (input.startsWith("/memory ")) {
+      const { 
+        addSharedMemoryEntry, 
+        searchSharedMemory, 
+        getRelevantEntries, 
+        getSharedMemoryStats 
+      } = await import("./state/shared-memory.js");
+      
+      const parts = input.split(" ");
+      const subCmd = parts[1];
+      
+      switch (subCmd) {
+        case "add":
+          log.raw("");
+          log.info("📝 Adding shared memory entry...");
+          
+          const inquirer = await import("inquirer");
+          const answers = await inquirer.default.prompt([
+            {
+              type: "list",
+              name: "category",
+              message: "Category:",
+              choices: ["architecture", "style", "pattern", "convention", "framework", "library"]
+            },
+            {
+              type: "input",
+              name: "title",
+              message: "Title:",
+              validate: (input: string) => input.trim().length > 0 || "Title is required"
+            },
+            {
+              type: "editor",
+              name: "content",
+              message: "Content (will open editor):",
+              validate: (input: string) => input.trim().length > 0 || "Content is required"
+            },
+            {
+              type: "input",
+              name: "tags",
+              message: "Tags (comma-separated):",
+              filter: (input: string) => input.split(",").map(s => s.trim()).filter(s => s.length > 0)
+            }
+          ]);
+          
+          await addSharedMemoryEntry(
+            answers.category,
+            answers.title,
+            answers.content,
+            answers.tags,
+            repo
+          );
+          break;
+          
+        case "list":
+          const relevant = await getRelevantEntries(repo);
+          
+          if (relevant.length === 0) {
+            log.info("No shared memory entries found");
+          } else {
+            log.raw("");
+            log.raw(log.colors.bright("🧠 Shared Memory Entries:"));
+            log.raw("");
+            
+            for (const entry of relevant.slice(0, 10)) {
+              const category = log.colors.cyan(`[${entry.category}]`);
+              const title = log.colors.bright(entry.title);
+              const usage = log.colors.dim(`(used ${entry.usageCount}x)`);
+              log.raw(`  ${category} ${title} ${usage}`);
+              
+              if (entry.tags.length > 0) {
+                const tags = entry.tags.map(tag => log.colors.yellow(`#${tag}`)).join(" ");
+                log.raw(`    Tags: ${tags}`);
+              }
+              
+              // Show truncated content
+              const preview = entry.content.substring(0, 100);
+              log.raw(`    ${log.colors.dim(preview)}${entry.content.length > 100 ? "..." : ""}`);
+              log.raw("");
+            }
+            
+            if (relevant.length > 10) {
+              log.raw(`  ... and ${relevant.length - 10} more entries`);
+            }
+          }
+          break;
+          
+        case "search":
+          const searchQuery = parts.slice(2).join(" ");
+          if (!searchQuery) {
+            log.error("Usage: /memory search <query>");
+            break;
+          }
+          
+          const results = await searchSharedMemory(searchQuery, repo);
+          
+          if (results.length === 0) {
+            log.info(`No entries found for "${searchQuery}"`);
+          } else {
+            log.raw("");
+            log.raw(log.colors.bright(`🔍 Search Results for "${searchQuery}":`));
+            log.raw("");
+            
+            for (const entry of results.slice(0, 5)) {
+              const category = log.colors.cyan(`[${entry.category}]`);
+              const title = log.colors.bright(entry.title);
+              log.raw(`  ${category} ${title}`);
+              
+              // Show matching content excerpt
+              const queryLower = searchQuery.toLowerCase();
+              const content = entry.content.toLowerCase();
+              const matchIndex = content.indexOf(queryLower);
+              
+              if (matchIndex !== -1) {
+                const start = Math.max(0, matchIndex - 50);
+                const end = Math.min(entry.content.length, matchIndex + 150);
+                const excerpt = entry.content.substring(start, end);
+                log.raw(`    ${log.colors.dim("..." + excerpt + "...")}`);
+              }
+              log.raw("");
+            }
+          }
+          break;
+          
+        case "stats":
+          const stats = await getSharedMemoryStats();
+          
+          log.raw("");
+          log.raw(log.colors.bright("📊 Shared Memory Statistics:"));
+          log.raw("");
+          log.raw(`  Total entries: ${log.colors.green(stats.totalEntries.toString())}`);
+          log.raw(`  Total usage: ${log.colors.yellow(stats.totalUsage.toString())}`);
+          log.raw("");
+          
+          if (Object.keys(stats.categoryCounts).length > 0) {
+            log.raw("  Categories:");
+            for (const [category, count] of Object.entries(stats.categoryCounts)) {
+              log.raw(`    ${log.colors.cyan(category)}: ${count}`);
+            }
+            log.raw("");
+          }
+          
+          if (stats.topTags.length > 0) {
+            log.raw("  Top tags:");
+            for (const { tag, count } of stats.topTags.slice(0, 5)) {
+              log.raw(`    ${log.colors.yellow(`#${tag}`)}: ${count}`);
+            }
+          }
+          break;
+          
+        default:
+          log.error(`Unknown memory command: ${subCmd}`);
+          log.info("Use '/memory' to see available commands");
+      }
+      
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+
+    // Macro commands
+    if (cmd === "/macro" || cmd === "/macros") {
+      const { loadAllMacros, getMacro, removeMacro } = await import("./macros/storage.js");
+      const { executeMacro, getActiveExecutions } = await import("./macros/executor.js");
+      const { startRecording, stopRecording, cancelRecording, isRecording, getRecordingSession } = await import("./macros/recorder.js");
+      
+      const subCmd = args[1];
+      
+      if (!subCmd) {
+        log.raw("");
+        log.raw(log.colors.bright("🎯 Macro Commands:"));
+        log.raw("");
+        log.raw(`  ${log.colors.cyan("/macro list")}              ${log.colors.dim("- List all macros")}`);
+        log.raw(`  ${log.colors.cyan("/macro run <name>")}        ${log.colors.dim("- Execute a macro")}`);
+        log.raw(`  ${log.colors.cyan("/macro create <name>")}     ${log.colors.dim("- Start recording a macro")}`);
+        log.raw(`  ${log.colors.cyan("/macro stop")}             ${log.colors.dim("- Stop recording and save")}`);
+        log.raw(`  ${log.colors.cyan("/macro cancel")}           ${log.colors.dim("- Cancel recording")}`);
+        log.raw(`  ${log.colors.cyan("/macro delete <name>")}    ${log.colors.dim("- Delete a macro")}`);
+        log.raw(`  ${log.colors.cyan("/macro status")}           ${log.colors.dim("- Show recording/execution status")}`);
+        log.raw("");
+        log.raw("Built-in macros:");
+        log.raw(`  ${log.colors.dim("hotfix, deploy-prep, clean-start")}`);
+        log.raw("");
+        rl.prompt();
+        return;
+      }
+      
+      switch (subCmd) {
+        case "list":
+          const macros = await loadAllMacros(repo);
+          if (macros.length === 0) {
+            log.info("No macros found");
+          } else {
+            log.raw("");
+            log.raw(log.colors.bright("📋 Available Macros:"));
+            log.raw("");
+            for (const macro of macros.sort((a, b) => b.usageCount - a.usageCount)) {
+              const scope = macro.scope === "global" ? "🌐" : "📁";
+              const usage = macro.usageCount > 0 ? log.colors.dim(` (used ${macro.usageCount}x)`) : "";
+              log.raw(`  ${scope} ${log.colors.cyan(macro.name.padEnd(20))} ${macro.description}${usage}`);
+              log.raw(`     ${log.colors.dim(`${macro.steps.length} steps • ${macro.tags.join(", ")}`)}`);
+            }
+            log.raw("");
+          }
+          break;
+          
+        case "run":
+          const macroName = args[2];
+          if (!macroName) {
+            log.error("Please specify macro name: /macro run <name>");
+            break;
+          }
+          
+          const macro = await getMacro(macroName, repo);
+          if (!macro) {
+            log.error(`Macro not found: ${macroName}`);
+            break;
+          }
+          
+          log.info(`Executing macro: ${macro.name}`);
+          const execution = await executeMacro(macro, repo);
+          
+          if (execution.status === "completed") {
+            log.success(`Macro completed successfully in ${Date.now() - new Date(execution.startTime).getTime()}ms`);
+          } else {
+            log.error(`Macro failed: ${execution.error}`);
+          }
+          break;
+          
+        case "create":
+          const newMacroName = args[2];
+          if (!newMacroName) {
+            log.error("Please specify macro name: /macro create <name>");
+            break;
+          }
+          
+          const description = args.slice(3).join(" ") || "Recorded macro";
+          await startRecording(newMacroName, description, repo, "project");
+          break;
+          
+        case "stop":
+          const savedMacro = await stopRecording(repo);
+          if (!savedMacro) {
+            log.warn("No recording session active or no steps recorded");
+          }
+          break;
+          
+        case "cancel":
+          const cancelled = await cancelRecording(repo);
+          if (!cancelled) {
+            log.warn("No recording session active");
+          }
+          break;
+          
+        case "delete":
+          const deleteTarget = args[2];
+          if (!deleteTarget) {
+            log.error("Please specify macro name: /macro delete <name>");
+            break;
+          }
+          
+          const deleted = await removeMacro(deleteTarget, repo);
+          if (deleted) {
+            log.success(`Deleted macro: ${deleteTarget}`);
+          } else {
+            log.error(`Macro not found: ${deleteTarget}`);
+          }
+          break;
+          
+        case "status":
+          const recording = getRecordingSession(repo);
+          const activeExecs = getActiveExecutions();
+          
+          log.raw("");
+          if (recording) {
+            const status = recording.isRecording ? "🔴 Recording" : "⏸️ Paused";
+            log.raw(`${status}: ${recording.name} (${recording.steps.length} steps)`);
+          } else {
+            log.raw("🟦 No active recording");
+          }
+          
+          if (activeExecs.length > 0) {
+            log.raw("");
+            log.raw("🏃 Active executions:");
+            for (const exec of activeExecs) {
+              log.raw(`  ${exec.macroName}: Step ${exec.currentStep + 1}/${exec.totalSteps} (${exec.status})`);
+            }
+          }
+          log.raw("");
+          break;
+          
+        default:
+          log.error(`Unknown macro command: ${subCmd}`);
+          log.info("Use '/macro' to see available commands");
+      }
+      
+      rl.prompt();
+      return;
+    }
+
+    // GitHub integration commands
+    if (cmd === "/github" || cmd === "/gh") {
+      const { runDependencyUpdate, getGitHubIntegrationStatus } = await import("./github/index.js");
+      
+      const subCmd = args[1];
+      
+      if (!subCmd) {
+        log.raw("");
+        log.raw(log.colors.bright("🐙 GitHub Integration Commands:"));
+        log.raw("");
+        log.raw(`  ${log.colors.cyan("/github status")}           ${log.colors.dim("- Show GitHub integration status")}`);
+        log.raw(`  ${log.colors.cyan("/github deps")}             ${log.colors.dim("- Check dependency updates")}`);
+        log.raw(`  ${log.colors.cyan("/github deps --update")}    ${log.colors.dim("- Apply dependency updates")}`);
+        log.raw(`  ${log.colors.cyan("/github deps --major")}     ${log.colors.dim("- Include major updates")}`);
+        log.raw("");
+        log.raw("Environment variables:");
+        log.raw(`  ${log.colors.dim("GITHUB_WEBHOOK_ENABLED=true")}   - Enable webhook server`);
+        log.raw(`  ${log.colors.dim("GITHUB_WEBHOOK_PORT=3000")}      - Webhook server port`);
+        log.raw(`  ${log.colors.dim("GITHUB_WEBHOOK_SECRET=...")}     - Webhook signature secret`);
+        log.raw(`  ${log.colors.dim("GITHUB_TOKEN=...")}             - GitHub API token`);
+        log.raw("");
+        rl.prompt();
+        return;
+      }
+      
+      switch (subCmd) {
+        case "status":
+          const status = getGitHubIntegrationStatus();
+          log.raw("");
+          log.raw(log.colors.bright("🐙 GitHub Integration Status:"));
+          log.raw("");
+          
+          if (status.enabled) {
+            log.raw(`  ${log.colors.green("✅")} Webhook server: ${status.listening ? 'Running' : 'Stopped'} (port ${status.port})`);
+            log.raw(`  ${log.colors.cyan("📝")} Supported commands: fix, test, lint, build, pr, hotfix, deploy-prep`);
+            log.raw(`  ${log.colors.cyan("🔒")} Permissions: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR`);
+          } else {
+            log.raw(`  ${log.colors.red("❌")} Webhook server: Disabled`);
+            log.raw(`  ${log.colors.dim("Set GITHUB_WEBHOOK_ENABLED=true to enable")}`);
+          }
+          
+          const hasToken = !!process.env.GITHUB_TOKEN;
+          log.raw(`  ${hasToken ? log.colors.green("✅") : log.colors.red("❌")} GitHub token: ${hasToken ? 'Configured' : 'Missing'}`);
+          
+          if (!hasToken) {
+            log.raw(`  ${log.colors.dim("Set GITHUB_TOKEN environment variable for full functionality")}`);
+          }
+          log.raw("");
+          break;
+          
+        case "deps":
+        case "dependencies":
+          const updateFlag = args.includes("--update");
+          const majorFlag = args.includes("--major");
+          const dryFlag = args.includes("--dry") || !updateFlag;
+          
+          const updateTypes: Array<"patch" | "minor" | "major"> = majorFlag 
+            ? ["patch", "minor", "major"] 
+            : ["patch", "minor"];
+          
+          await runDependencyUpdate(repo, {
+            types: updateTypes,
+            createPR: true,
+            dry: dryFlag
+          });
+          break;
+          
+        default:
+          log.error(`Unknown GitHub command: ${subCmd}`);
+          log.info("Use '/github' to see available commands");
+      }
+      
+      rl.prompt();
+      return;
+    }
+
+    // Documentation commands
+    if (cmd === "/doc" || cmd === "/docs") {
+      log.raw("");
+      log.raw(log.colors.bright("📚 Documentation Commands:"));
+      log.raw("");
+      log.raw(`  ${log.colors.cyan("/doc module <file>")}    ${log.colors.dim("- Document a module/file")}`);
+      log.raw(`  ${log.colors.cyan("/doc readme")}           ${log.colors.dim("- Generate project README")}`);
+      log.raw(`  ${log.colors.cyan("/doc api")}              ${log.colors.dim("- Generate API documentation")}`);
+      log.raw("");
+      log.raw("Examples:");
+      log.raw(`  ${log.colors.dim("/doc module src/utils.ts")}`);
+      log.raw(`  ${log.colors.dim("/doc readme")}`);
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+    
+    if (input.startsWith("/doc ")) {
+      const { generateDocumentation } = await import("./agent/doc-generator.js");
+      const fs = await import("node:fs/promises");
+      
+      const parts = input.split(" ");
+      const docType = parts[1];
+      const targetFile = parts[2];
+      
+      switch (docType) {
+        case "module":
+        case "file":
+          if (!targetFile) {
+            log.error("Usage: /doc module <file-path>");
+            log.raw("Example: /doc module src/utils.ts");
+            break;
+          }
+          
+          log.step("Generating docs", `for ${targetFile}...`);
+          
+          const moduleResult = await generateDocumentation(repo, {
+            type: "module",
+            targetPath: targetFile,
+            includeExamples: true,
+            includeTypes: true,
+            style: "markdown"
+          });
+          
+          if (!moduleResult.success) {
+            log.error("Documentation generation failed:", moduleResult.error);
+            break;
+          }
+          
+          log.success(`Generated documentation for ${targetFile}`);
+          log.raw("");
+          log.raw(log.colors.bright("📄 Generated Documentation:"));
+          log.raw("");
+          
+          // Show preview of generated docs
+          const preview = moduleResult.generatedDocs.substring(0, 500);
+          log.raw(preview);
+          if (moduleResult.generatedDocs.length > 500) {
+            log.raw(log.colors.dim("... (truncated for display)"));
+          }
+          
+          // Ask if user wants to apply the documentation
+          if (moduleResult.filesToUpdate.length > 0) {
+            log.raw("");
+            const inquirer = await import("inquirer");
+            const { apply } = await inquirer.default.prompt([{
+              type: "confirm",
+              name: "apply",
+              message: "Apply this documentation to files?",
+              default: true
+            }]);
+            
+            if (apply) {
+              for (const file of moduleResult.filesToUpdate) {
+                try {
+                  await fs.writeFile(file.path, file.content, "utf8");
+                  log.success(`${file.type === "create" ? "Created" : "Updated"}: ${file.path}`);
+                } catch (error) {
+                  log.error(`Failed to ${file.type} ${file.path}:`, error);
+                }
+              }
+            }
+          }
+          break;
+          
+        case "readme":
+          log.step("Generating README", "analyzing project structure...");
+          
+          const readmeResult = await generateDocumentation(repo, {
+            type: "readme",
+            targetPath: "README.md",
+            includeExamples: true,
+            style: "markdown"
+          });
+          
+          if (!readmeResult.success) {
+            log.error("README generation failed:", readmeResult.error);
+            break;
+          }
+          
+          log.success("Generated project README");
+          log.raw("");
+          log.raw(log.colors.bright("📋 Generated README:"));
+          log.raw("");
+          
+          // Show preview
+          const readmePreview = readmeResult.generatedDocs.split('\n').slice(0, 20).join('\n');
+          log.raw(readmePreview);
+          log.raw(log.colors.dim("... (showing first 20 lines)"));
+          
+          // Ask if user wants to save README
+          log.raw("");
+          const inquirer2 = await import("inquirer");
+          const { saveReadme } = await inquirer2.default.prompt([{
+            type: "confirm",
+            name: "saveReadme",
+            message: "Save this README.md to the project?",
+            default: true
+          }]);
+          
+          if (saveReadme && readmeResult.filesToUpdate.length > 0) {
+            const file = readmeResult.filesToUpdate[0];
+            try {
+              await fs.writeFile(file.path, file.content, "utf8");
+              log.success(`Created: README.md`);
+            } catch (error) {
+              log.error("Failed to create README.md:", error);
+            }
+          }
+          break;
+          
+        case "api":
+          log.info("API documentation generation - analyzing project...");
+          
+          // Find API-related files
+          const glob = (await import("fast-glob")).default;
+          const apiFiles = await glob("**/{api,routes,controllers,handlers}/**/*.{ts,js,py,go}", {
+            cwd: repo,
+            ignore: ["node_modules/**", ".git/**", "dist/**", "build/**"]
+          });
+          
+          if (apiFiles.length === 0) {
+            log.warn("No API files found. Tried looking for files in api/, routes/, controllers/, handlers/ directories");
+            break;
+          }
+          
+          log.info(`Found ${apiFiles.length} API files`);
+          
+          // Generate docs for each API file
+          const apiDocs: string[] = [];
+          
+          for (const apiFile of apiFiles.slice(0, 5)) { // Limit to prevent overload
+            log.step("Documenting API", apiFile);
+            
+            const apiResult = await generateDocumentation(repo, {
+              type: "api",
+              targetPath: apiFile,
+              includeExamples: true,
+              includeTypes: true,
+              style: "markdown"
+            });
+            
+            if (apiResult.success) {
+              apiDocs.push(`## ${apiFile}\n\n${apiResult.generatedDocs}\n\n---\n`);
+            }
+          }
+          
+          if (apiDocs.length > 0) {
+            const combinedApiDocs = `# API Documentation\n\n${apiDocs.join('\n')}`;
+            
+            log.success(`Generated API documentation for ${apiDocs.length} files`);
+            
+            // Save to API.md
+            const inquirer3 = await import("inquirer");
+            const { saveApiDocs } = await inquirer3.default.prompt([{
+              type: "confirm",
+              name: "saveApiDocs",
+              message: "Save API documentation to API.md?",
+              default: true
+            }]);
+            
+            if (saveApiDocs) {
+              try {
+                await fs.writeFile(path.join(repo, "API.md"), combinedApiDocs, "utf8");
+                log.success("Created: API.md");
+              } catch (error) {
+                log.error("Failed to create API.md:", error);
+              }
+            }
+          }
+          break;
+          
+        default:
+          log.error(`Unknown documentation type: ${docType}`);
+          log.info("Use '/doc' to see available commands");
+      }
+      
+      log.raw("");
+      rl.prompt();
+      return;
+    }
+
     // Help command
     if (cmd === "help") {
       log.raw("");
@@ -682,6 +1429,36 @@ const launchUI = Boolean((argv as any).ui);
       log.raw(`    ${log.colors.magenta("!<cmd>")}          ${log.colors.dim("- Execute shell command")}`);
       log.raw("");
       
+      log.raw(log.colors.cyan("  Tools:"));
+      log.raw(`    ${log.colors.magenta("/tools")}          ${log.colors.dim("- Show tool status")}`);
+      log.raw(`    ${log.colors.magenta("/tools <name> on|off")} ${log.colors.dim("- Toggle tools (shell, git, tests, browser)")}`);
+      log.raw(`    ${log.colors.magenta("/hunks")}          ${log.colors.dim("- Toggle interactive hunk approval")}`);
+      log.raw("");
+      
+      log.raw(log.colors.cyan("  Memory:"));
+      log.raw(`    ${log.colors.magenta("/memory")}         ${log.colors.dim("- Shared knowledge base commands")}`);
+      log.raw(`    ${log.colors.magenta("/memory add")}     ${log.colors.dim("- Add knowledge entry")}`);
+      log.raw(`    ${log.colors.magenta("/memory search")}  ${log.colors.dim("- Search entries")}`);
+      log.raw("");
+      
+      log.raw(log.colors.cyan("  Documentation:"));
+      log.raw(`    ${log.colors.magenta("/doc")}            ${log.colors.dim("- Documentation commands")}`);
+      log.raw(`    ${log.colors.magenta("/doc module <file>")} ${log.colors.dim("- Document a specific file")}`);
+      log.raw(`    ${log.colors.magenta("/doc readme")}     ${log.colors.dim("- Generate project README")}`);
+      log.raw("");
+      
+      log.raw(log.colors.cyan("  Macros:"));
+      log.raw(`    ${log.colors.magenta("/macro")}          ${log.colors.dim("- Macro system commands")}`);
+      log.raw(`    ${log.colors.magenta("/macro run <name>")} ${log.colors.dim("- Execute a saved macro")}`);
+      log.raw(`    ${log.colors.magenta("/macro create <name>")} ${log.colors.dim("- Start recording a macro")}`);
+      log.raw("");
+      
+      log.raw(log.colors.cyan("  GitHub Integration:"));
+      log.raw(`    ${log.colors.magenta("/github")}         ${log.colors.dim("- GitHub integration commands")}`);
+      log.raw(`    ${log.colors.magenta("/github status")}  ${log.colors.dim("- Show integration status")}`);
+      log.raw(`    ${log.colors.magenta("/github deps")}    ${log.colors.dim("- Check dependency updates")}`);
+      log.raw("");
+      
       log.raw(log.colors.cyan("  Logging:"));
       log.raw(`    ${log.colors.magenta("log")}             ${log.colors.dim("- Show session history")}`);
       log.raw(`    ${log.colors.magenta("clear-log")}       ${log.colors.dim("- Clear all logs")}`);
@@ -693,11 +1470,23 @@ const launchUI = Boolean((argv as any).ui);
 
     // Default: treat as coding task
     await runTask(repo, input, dry, sessionState.model, branchName, sessionState.provider);
+    
+    // Record command for macro if recording is active
+    const { recordCommandIfActive } = await import("./macros/index.js");
+    await recordCommandIfActive(repo, input);
+    
     rl.prompt();
   });
 
-  rl.on("close", () => {
+  rl.on("close", async () => {
     log.info("Goodbye!");
+    
+    // Cleanup GitHub integration
+    if (process.env.GITHUB_WEBHOOK_ENABLED === 'true') {
+      const { cleanupGitHubIntegration } = await import("./github/index.js");
+      await cleanupGitHubIntegration();
+    }
+    
     process.exit(0);
   });
 

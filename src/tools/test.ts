@@ -2,6 +2,9 @@ import { runShell } from "./shell.js";
 import { log } from "../util/logging.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { testFailurePrompt } from "../agent/prompts.js";
+import { getProvider } from "../providers/index.js";
+import { loadConfig } from "../state/config.js";
 
 export interface TestResult {
   success: boolean;
@@ -13,6 +16,8 @@ export interface TestResult {
   testsFailed?: number;
   coverage?: number;
   duration?: number;
+  failureAnalysis?: string;
+  failingTests?: string[];
 }
 
 export interface ProjectInfo {
@@ -200,15 +205,29 @@ export async function runTests(repo: string, verbose: boolean = false): Promise<
     if (result.ok) {
       const output = result.data.stdout + result.data.stderr;
       const parsed = parseTestOutput(output, cmd[0]);
+      const success = result.data.code === 0;
       
-      return {
-        success: result.data.code === 0,
+      const testResult: TestResult = {
+        success,
         runner: cmd[0],
         command: cmd,
         output,
         duration,
         ...parsed
       };
+      
+      // Add failure analysis if tests failed
+      if (!success) {
+        const failingTests = extractFailingTests(output, cmd[0]);
+        testResult.failingTests = failingTests;
+        
+        if (failingTests.length > 0) {
+          log.step("Analyzing failures", "getting AI insights...");
+          testResult.failureAnalysis = await analyzeTestFailures(output, failingTests, repo);
+        }
+      }
+      
+      return testResult;
     }
   }
   
@@ -465,6 +484,90 @@ function getBuildCommands(projectInfo: ProjectInfo): string[][] {
   }
   
   return commands;
+}
+
+// Extract failing test names from output
+function extractFailingTests(output: string, runner: string): string[] {
+  const failingTests: string[] = [];
+  
+  switch (runner) {
+    case "jest":
+    case "npx":
+      // Jest format: "● TestSuite › test name"
+      const jestMatches = output.match(/● .+ › .+/g);
+      if (jestMatches) {
+        failingTests.push(...jestMatches.map(m => m.replace('● ', '')));
+      }
+      break;
+      
+    case "pytest":
+      // Pytest format: "test_file.py::test_name FAILED"
+      const pytestMatches = output.match(/(.+::.+) FAILED/g);
+      if (pytestMatches) {
+        failingTests.push(...pytestMatches.map(m => m.replace(' FAILED', '')));
+      }
+      break;
+      
+    case "go":
+      // Go format: "--- FAIL: TestName"
+      const goMatches = output.match(/--- FAIL: (\w+)/g);
+      if (goMatches) {
+        failingTests.push(...goMatches.map(m => m.replace('--- FAIL: ', '')));
+      }
+      break;
+      
+    case "cargo":
+      // Rust format: "test tests::test_name ... FAILED"
+      const cargoMatches = output.match(/test (.+) \.\.\. FAILED/g);
+      if (cargoMatches) {
+        failingTests.push(...cargoMatches.map(m => m.replace(/test (.+) \.\.\. FAILED/, '$1')));
+      }
+      break;
+  }
+  
+  return failingTests;
+}
+
+// AI-powered test failure analysis
+async function analyzeTestFailures(
+  testOutput: string, 
+  failingTests: string[], 
+  projectPath: string
+): Promise<string | undefined> {
+  try {
+    const config = await loadConfig();
+    if (!config) return undefined;
+    
+    const provider = getProvider(config.defaultProvider);
+    const model = config.models[config.defaultProvider]?.chat;
+    
+    if (!model) return undefined;
+    
+    // Get some project context
+    let projectContext = "";
+    try {
+      const packageJson = path.join(projectPath, "package.json");
+      const packageContent = await fs.readFile(packageJson, "utf8");
+      const pkg = JSON.parse(packageContent);
+      projectContext = `Project: ${pkg.name || "Unknown"}\nFramework: ${pkg.dependencies ? Object.keys(pkg.dependencies).slice(0, 5).join(", ") : "Unknown"}`;
+    } catch {
+      projectContext = "Project context unavailable";
+    }
+    
+    const prompt = testFailurePrompt(testOutput, failingTests, projectContext);
+    
+    const analysis = await provider.chat([
+      { role: "user", content: prompt }
+    ], {
+      model,
+      temperature: 0.3
+    });
+    
+    return analysis;
+  } catch (error) {
+    log.warn("Failed to analyze test failures:", error);
+    return undefined;
+  }
 }
 
 // Legacy functions for backward compatibility

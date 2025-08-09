@@ -8,6 +8,7 @@ import { log } from "../util/logging.js";
 import { getProvider, ProviderId } from "../providers/index.js";
 import { loadConfig } from "../state/config.js";
 import { estimateTaskCost, checkBudgetBeforeTask, trackTaskUsage } from "../util/costs.js";
+import { generateSharedContext } from "../state/shared-memory.js";
 
 export async function runTask(repo: string, task: string, dry = false, model?: string, branchName?: string, providerId?: string) {
   // 1) Ensure index exists (very naive check)
@@ -92,8 +93,13 @@ export async function runTask(repo: string, task: string, dry = false, model?: s
   let memory = "";
   try { memory = (await import("node:fs/promises")).readFile(`${repo}/TERMCODE.md`, "utf8").then(String) as any; } catch {}
 
+  // 4.5) Get shared memory context
+  log.step("Context loading", "gathering shared knowledge...");
+  const sharedContext = await generateSharedContext(repo, task);
+
   // 5) Ask model for a plan + diff
-  const sys = systemPrompt(String(memory || ""));
+  const fullMemory = [memory, sharedContext].filter(Boolean).join("\n\n");
+  const sys = systemPrompt(String(fullMemory || ""));
   const usr = userPrompt(task, chunks);
   
   const messages = [
@@ -126,19 +132,48 @@ export async function runTask(repo: string, task: string, dry = false, model?: s
     return;
   }
 
-  // 6) Apply diff
-  const { applied, rejected } = await applyUnifiedDiff(repo, diff);
+  // 6) Apply diff (with optional interactive hunk selection)
+  const interactive = process.env.TERMCODE_INTERACTIVE_HUNKS === 'true';
+  const { applied, rejected } = await applyUnifiedDiff(repo, diff, interactive);
   log.info("Applied:", applied);
   if (rejected.length) log.warn("Rejected:", rejected);
 
-  // 7) Commit changes
+  // 7) Optional auto-debug if tests are configured to run
+  if (!dry && applied.length > 0 && config.tools.tests === "auto") {
+    log.step("Auto-debug check", "running tests after changes...");
+    
+    try {
+      const { shouldAutoDebug, autoDebugLoop } = await import("./auto-debugger.js");
+      const { runTests } = await import("../tools/test.js");
+      
+      const testResult = await runTests(repo);
+      
+      if (shouldAutoDebug(testResult)) {
+        log.info("🔄 Tests failed, starting auto-debug...");
+        const debugResult = await autoDebugLoop(repo);
+        
+        if (debugResult.success) {
+          log.success(`✅ Auto-debug succeeded after ${debugResult.totalAttempts} attempts`);
+        } else {
+          log.warn(`⚠️ Auto-debug failed after ${debugResult.totalAttempts} attempts`);
+          log.warn("You may need to fix the remaining issues manually");
+        }
+      } else if (testResult.success) {
+        log.success("✅ All tests passed");
+      }
+    } catch (error) {
+      log.warn("Auto-debug check failed:", error);
+    }
+  }
+
+  // 8) Commit changes
   if (!dry && applied.length > 0) {
     const commit = commitAll(repo, `termcode: ${task}`);
     if (!commit.ok) log.warn("Commit failed:", (commit as any).error);
     else log.info("Changes committed");
   }
 
-  // 8) Log session
+  // 9) Log session
   if (branchName) {
     await logSession(repo, {
       timestamp: new Date().toISOString(),

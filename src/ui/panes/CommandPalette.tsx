@@ -77,6 +77,64 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       action: () => onExecute('build'),
     },
 
+    // Tool toggles
+    {
+      id: 'tool-shell-on',
+      title: 'Enable Shell Commands',
+      description: 'Allow execution of shell commands (!cmd)',
+      category: 'action' as const,
+      action: () => onExecute('/tools shell on'),
+    },
+    {
+      id: 'tool-shell-off',
+      title: 'Disable Shell Commands',
+      description: 'Prevent execution of shell commands',
+      category: 'action' as const,
+      action: () => onExecute('/tools shell off'),
+    },
+    {
+      id: 'tool-tests-on',
+      title: 'Enable Auto Tests',
+      description: 'Run tests automatically after changes',
+      category: 'action' as const,
+      action: () => onExecute('/tools tests on'),
+    },
+    {
+      id: 'tool-tests-off',
+      title: 'Disable Auto Tests',
+      description: 'Turn off automatic test running',
+      category: 'action' as const,
+      action: () => onExecute('/tools tests off'),
+    },
+    {
+      id: 'tool-git-on',
+      title: 'Enable Git Operations',
+      description: 'Allow git branch and commit operations',
+      category: 'action' as const,
+      action: () => onExecute('/tools git on'),
+    },
+    {
+      id: 'tool-git-off',
+      title: 'Disable Git Operations',
+      description: 'Prevent automated git operations',
+      category: 'action' as const,
+      action: () => onExecute('/tools git off'),
+    },
+    {
+      id: 'tool-browser-on',
+      title: 'Enable Browser Tools',
+      description: 'Allow web browsing capabilities (experimental)',
+      category: 'action' as const,
+      action: () => onExecute('/tools browser on'),
+    },
+    {
+      id: 'tool-browser-off',
+      title: 'Disable Browser Tools',
+      description: 'Turn off web browsing capabilities',
+      category: 'action' as const,
+      action: () => onExecute('/tools browser off'),
+    },
+
     // Git actions
     {
       id: 'git-rollback',

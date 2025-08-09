@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { log } from "../util/logging.js";
+import { parseUnifiedDiff, selectHunksInteractively, generateSelectedDiff, getSelectionSummary } from "./hunk-selector.js";
 
 export interface DiffResult {
   applied: string[];
@@ -47,7 +48,7 @@ export interface DiffLine {
 /**
  * Enhanced unified diff applier with comprehensive error handling and conflict resolution.
  */
-export async function applyUnifiedDiff(repo: string, patch: string): Promise<DiffResult> {
+export async function applyUnifiedDiff(repo: string, patch: string, interactive: boolean = false): Promise<DiffResult> {
   const result: DiffResult = {
     applied: [],
     rejected: [],
@@ -55,11 +56,35 @@ export async function applyUnifiedDiff(repo: string, patch: string): Promise<Dif
     warnings: []
   };
 
-  // Parse patch into individual file diffs
-  const fileDiffs = parseUnifiedDiff(patch);
+  let finalPatch = patch;
+
+  // Interactive hunk selection if requested
+  if (interactive) {
+    const parsedDiff = parseUnifiedDiff(patch);
+    
+    if (parsedDiff.files.length > 0) {
+      log.step("Interactive Mode", "reviewing hunks for selective application...");
+      
+      const selectedDiff = await selectHunksInteractively(parsedDiff);
+      const summary = getSelectionSummary(selectedDiff);
+      
+      if (summary.selectedHunks === 0) {
+        log.info("No hunks selected - skipping application");
+        return result;
+      }
+      
+      if (summary.selectedHunks < summary.totalHunks) {
+        log.info(`Applying ${summary.selectedHunks} of ${summary.totalHunks} hunks`);
+        finalPatch = generateSelectedDiff(selectedDiff);
+      }
+    }
+  }
+
+  // Parse patch into individual file diffs (using existing parser)
+  const fileDiffs = parseUnifiedDiffLegacy(finalPatch);
   
   // First try git apply with 3-way merge
-  const gitResult = await tryGitApply(repo, patch);
+  const gitResult = await tryGitApply(repo, finalPatch);
   if (gitResult.success) {
     result.applied = gitResult.files;
     
@@ -144,7 +169,7 @@ async function tryGitApply(repo: string, patch: string): Promise<{ success: bool
   }
 }
 
-export function parseUnifiedDiff(patch: string): FileDiff[] {
+export function parseUnifiedDiffLegacy(patch: string): FileDiff[] {
   const fileDiffs: FileDiff[] = [];
   const fileBlocks = patch.split(/^diff --git /m).filter(Boolean).map(p => "diff --git " + p);
   
@@ -440,7 +465,7 @@ function calculateSimilarity(str1: string, str2: string): number {
 function applyFilePatch(original: string, fp: string): { ok: boolean; text: string } {
   try {
     const fileDiffs = parseUnifiedDiff(fp);
-    if (fileDiffs.length === 0) return { ok: false, text: original };
+    if (!fileDiffs || (Array.isArray(fileDiffs) && fileDiffs.length === 0)) return { ok: false, text: original };
     
     const fileDiff = fileDiffs[0];
     const lines = original.split('\n');
